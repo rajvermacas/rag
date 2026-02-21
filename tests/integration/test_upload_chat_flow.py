@@ -31,9 +31,9 @@ class StatefulFakeChatService:
         if not self._ingest_service.has_upload:
             return ChatResult(
                 answer=(
-                    "From uploaded documents (with citations):\n"
+                    "From uploaded documents:\n"
                     f"{NO_DOCUMENT_EVIDENCE}\n\n"
-                    "From general knowledge (not from uploaded documents):\n"
+                    "From general knowledge:\n"
                     "I can still provide a broad answer from general knowledge."
                 ),
                 citations=[],
@@ -42,19 +42,17 @@ class StatefulFakeChatService:
             )
         return ChatResult(
             answer="The document says hello world.",
-            citations=[
-                {
-                    "doc_id": "doc-123",
-                    "filename": "a.txt",
-                    "chunk_id": "0",
-                    "score": 0.9,
-                    "page": None,
-                    "text": "The document says hello world.",
-                }
-            ],
+            citations=[],
             grounded=True,
             retrieved_count=1,
         )
+
+    async def stream_answer_question(self, question: str, history):
+        if not self._ingest_service.has_upload:
+            yield f"{NO_DOCUMENT_EVIDENCE}"
+            return
+        yield "The document says "
+        yield "hello world."
 
 
 class StatefulFakeDocumentService:
@@ -101,4 +99,35 @@ def test_upload_then_chat_returns_grounded_answer(
     payload = chat_response.json()
     assert payload["grounded"] is True
     assert payload["retrieved_count"] == 1
-    assert payload["citations"][0]["filename"] == "a.txt"
+    assert payload["citations"] == []
+
+
+def test_upload_then_chat_stream_returns_answer(
+    required_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ingest_service = StatefulFakeIngestService()
+    chat_service = StatefulFakeChatService(ingest_service)
+    document_service = StatefulFakeDocumentService(ingest_service)
+    fake_services = AppServices(
+        ingest_service=ingest_service,
+        chat_service=chat_service,
+        document_service=document_service,
+    )
+    monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
+    client = TestClient(create_app())
+
+    upload_response = client.post(
+        "/upload",
+        files={"file": ("a.txt", io.BytesIO(b"hello world"), "text/plain")},
+    )
+    assert upload_response.status_code == 200
+
+    stream_response = client.post(
+        "/chat/stream",
+        json={
+            "message": "What does the document say?",
+            "history": [{"role": "user", "message": "Earlier message"}],
+        },
+    )
+    assert stream_response.status_code == 200
+    assert stream_response.text == "The document says hello world."

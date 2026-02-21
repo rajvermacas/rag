@@ -2,10 +2,10 @@
 
 from dataclasses import dataclass
 import logging
-from typing import Any
+from typing import Any, AsyncIterator
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -188,7 +188,49 @@ def _register_routes(app: FastAPI, services: AppServices, settings: Settings) ->
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return ChatResponse(
             answer=result.answer,
-            citations=result.citations,
+            citations=[],
             grounded=result.grounded,
             retrieved_count=result.retrieved_count,
         )
+
+    @app.post("/chat/stream")
+    async def chat_stream(payload: ChatRequest) -> StreamingResponse:
+        logger.info(
+            "chat_stream_endpoint_called message_length=%s history_turns=%s",
+            len(payload.message),
+            len(payload.history),
+        )
+        history = [
+            ConversationTurn(role=turn.role, message=turn.message) for turn in payload.history
+        ]
+        try:
+            stream = await _resolve_chat_stream(
+                services.chat_service.stream_answer_question(payload.message, history)
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return StreamingResponse(
+            _stream_chat_chunks(stream),
+            media_type="text/plain; charset=utf-8",
+        )
+
+
+async def _stream_chat_chunks(stream: AsyncIterator[str]) -> AsyncIterator[str]:
+    chunk_count = 0
+    async for chunk in stream:
+        if chunk == "":
+            continue
+        chunk_count += 1
+        yield chunk
+    logger.info("chat_stream_completed chunk_count=%s", chunk_count)
+
+
+async def _resolve_chat_stream(stream_or_awaitable: Any) -> AsyncIterator[str]:
+    if hasattr(stream_or_awaitable, "__aiter__"):
+        return stream_or_awaitable
+    if hasattr(stream_or_awaitable, "__await__"):
+        resolved_stream = await stream_or_awaitable
+        if not hasattr(resolved_stream, "__aiter__"):
+            raise ValueError("chat stream resolver expected an async iterator")
+        return resolved_stream
+    raise ValueError("chat stream resolver expected an awaitable or async iterator")

@@ -36,6 +36,7 @@ class FakeAsyncClient:
 
 def test_embed_raises_on_non_200(monkeypatch: pytest.MonkeyPatch) -> None:
     response = FakeResponse(status_code=401, payload={"error": "bad key"}, text="bad key")
+
     async def fake_post_json(self, path: str, payload: dict) -> FakeResponse:
         client = FakeAsyncClient(response)
         return await client.post(path, {"Authorization": "Bearer k"}, payload)
@@ -54,6 +55,7 @@ def test_embed_returns_vectors(monkeypatch: pytest.MonkeyPatch) -> None:
         status_code=200,
         payload={"data": [{"embedding": [0.1, 0.2]}, {"embedding": [0.3, 0.4]}]},
     )
+
     async def fake_post_json(self, path: str, payload: dict) -> FakeResponse:
         client = FakeAsyncClient(response)
         return await client.post(path, {"Authorization": "Bearer k"}, payload)
@@ -69,6 +71,7 @@ def test_embed_returns_vectors(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_chat_raises_on_non_200(monkeypatch: pytest.MonkeyPatch) -> None:
     response = FakeResponse(status_code=500, payload={"error": "boom"}, text="boom")
+
     async def fake_post_json(self, path: str, payload: dict) -> FakeResponse:
         client = FakeAsyncClient(response)
         return await client.post(path, {"Authorization": "Bearer k"}, payload)
@@ -87,6 +90,7 @@ def test_chat_returns_content(monkeypatch: pytest.MonkeyPatch) -> None:
         status_code=200,
         payload={"choices": [{"message": {"content": "grounded answer"}}]},
     )
+
     async def fake_post_json(self, path: str, payload: dict) -> FakeResponse:
         client = FakeAsyncClient(response)
         return await client.post(path, {"Authorization": "Bearer k"}, payload)
@@ -98,3 +102,22 @@ def test_chat_returns_content(monkeypatch: pytest.MonkeyPatch) -> None:
 
     result = asyncio.run(client.generate_chat_response("system", "user"))
     assert result == "grounded answer"
+
+
+def test_chat_stream_returns_chunks(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_stream_post_data_lines(self, path: str, payload: dict):
+        if path != "/chat/completions":
+            raise AssertionError("unexpected path")
+        yield '{"choices":[{"delta":{"content":"Hello "}}]}'
+        yield '{"choices":[{"delta":{"content":"world"}}]}'
+
+    monkeypatch.setattr(OpenRouterClient, "_stream_post_data_lines", fake_stream_post_data_lines)
+    client = OpenRouterClient(
+        api_key="k", embed_model="openrouter/embed", chat_model="openrouter/chat"
+    )
+
+    async def collect() -> list[str]:
+        return [chunk async for chunk in client.stream_chat_response("system", "user")]
+
+    chunks = asyncio.run(collect())
+    assert chunks == ["Hello ", "world"]

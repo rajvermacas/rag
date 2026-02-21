@@ -1,8 +1,9 @@
 """Grounded chat orchestration service."""
 
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 import logging
-from typing import Protocol
+import re
+from typing import AsyncIterator, Protocol
 
 from app.services.vector_store import IndexedChunk, IndexedDocument
 
@@ -10,6 +11,10 @@ from app.services.vector_store import IndexedChunk, IndexedDocument
 logger = logging.getLogger(__name__)
 
 NO_DOCUMENT_EVIDENCE = "No relevant evidence found in uploaded documents."
+INLINE_CITATION_PATTERN = re.compile(
+    r"\[[^\]\n]*(?:#chunk_id\s*=\s*\d+|#\d+)[^\]\n]*\]",
+    re.IGNORECASE,
+)
 
 
 class RetrievalService(Protocol):
@@ -20,6 +25,11 @@ class RetrievalService(Protocol):
 class ChatClient(Protocol):
     async def generate_chat_response(self, system_prompt: str, user_prompt: str) -> str:
         """Generate a chat response from OpenRouter."""
+
+    async def stream_chat_response(
+        self, system_prompt: str, user_prompt: str
+    ) -> AsyncIterator[str]:
+        """Stream a chat response from OpenRouter."""
 
 
 class DocumentService(Protocol):
@@ -84,21 +94,46 @@ class ChatService:
 
         system_prompt = _build_system_prompt(has_document_evidence)
         user_prompt = _build_user_prompt(question, history, retrieved_chunks, documents)
-        answer = await self._chat_client.generate_chat_response(system_prompt, user_prompt)
-        citations = [_chunk_to_citation(chunk) for chunk in retrieved_chunks]
+        raw_answer = await self._chat_client.generate_chat_response(system_prompt, user_prompt)
+        answer = _remove_inline_citations(raw_answer)
 
         logger.info(
-            "chat_answer_completed grounded=%s citations=%s history_turns=%s",
+            "chat_answer_completed grounded=%s retrieved_count=%s history_turns=%s",
             has_document_evidence,
-            len(citations),
+            len(retrieved_chunks),
             len(history),
         )
         return ChatResult(
             answer=answer,
-            citations=citations,
+            citations=[],
             grounded=has_document_evidence,
             retrieved_count=len(retrieved_chunks),
         )
+
+    async def stream_answer_question(
+        self, question: str, history: list[ConversationTurn]
+    ) -> AsyncIterator[str]:
+        if question.strip() == "":
+            raise ValueError("question must not be empty")
+        _validate_history(history)
+        documents = self._document_service.list_documents()
+        logger.info(
+            "chat_stream_started question_length=%s history_turns=%s available_documents=%s",
+            len(question),
+            len(history),
+            len(documents),
+        )
+        if _is_document_inventory_question(question):
+            answer = _build_document_inventory_answer(documents)
+            logger.info("chat_stream_completed_inventory_request document_count=%s", len(documents))
+            return _single_chunk_stream(answer)
+
+        retrieval_query = _build_retrieval_query(question, history)
+        retrieved_chunks = await self._retrieve_chunks_or_empty(retrieval_query)
+        has_document_evidence = len(retrieved_chunks) > 0
+        system_prompt = _build_system_prompt(has_document_evidence)
+        user_prompt = _build_user_prompt(question, history, retrieved_chunks, documents)
+        return self._chat_client.stream_chat_response(system_prompt, user_prompt)
 
     async def _retrieve_chunks_or_empty(self, question: str) -> list[IndexedChunk]:
         try:
@@ -136,12 +171,13 @@ def _build_system_prompt(has_document_evidence: bool) -> str:
             f"'{NO_DOCUMENT_EVIDENCE}'. Then continue with a helpful answer using "
             "general knowledge. Exception: if the user asks which uploaded documents "
             "are available, answer directly from the 'Available uploaded documents' "
-            "section and do not output the no-evidence sentence."
+            "section and do not output the no-evidence sentence. Do not include "
+            "citations, bracketed references, or chunk identifiers in your answer."
         )
     else:
         document_section_instruction = (
-            "When using document evidence, cite it inline using this format: "
-            "[filename#chunk_id]."
+            "Use document evidence, but do not include citations, bracketed references, "
+            "or chunk identifiers in your answer."
         )
 
     return (
@@ -205,16 +241,13 @@ def _format_uploaded_documents(documents: list[IndexedDocument]) -> str:
     )
 
 
-def _chunk_to_citation(chunk: IndexedChunk) -> dict[str, str | float | int | None]:
-    citation = asdict(chunk)
-    return {
-        "doc_id": str(citation["doc_id"]),
-        "filename": str(citation["filename"]),
-        "chunk_id": str(citation["chunk_id"]),
-        "score": float(citation["score"]),
-        "page": citation["page"],
-        "text": str(citation["text"]),
-    }
+async def _single_chunk_stream(answer: str) -> AsyncIterator[str]:
+    yield answer
+
+
+def _remove_inline_citations(text: str) -> str:
+    cleaned_text = INLINE_CITATION_PATTERN.sub("", text)
+    return cleaned_text.strip()
 
 
 def _is_document_inventory_question(question: str) -> bool:

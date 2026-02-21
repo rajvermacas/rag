@@ -45,15 +45,16 @@ class FakeChatClientNoEvidence:
             raise AssertionError("uploaded document catalog should be present")
         if "a.txt" not in user_prompt or "b.pdf" not in user_prompt:
             raise AssertionError("document filenames should be present in user prompt")
-        return (
-            f"{NO_DOCUMENT_EVIDENCE} Revenue can refer to total income before expenses."
-        )
+        return f"{NO_DOCUMENT_EVIDENCE} Revenue can refer to total income before expenses."
+
+    async def stream_chat_response(self, system_prompt: str, user_prompt: str):
+        yield await self.generate_chat_response(system_prompt, user_prompt)
 
 
 class FakeChatClientWithEvidence:
     async def generate_chat_response(self, system_prompt: str, user_prompt: str) -> str:
-        if "[filename#chunk_id]" not in system_prompt:
-            raise AssertionError("missing citation format requirement")
+        if "do not include citations" not in system_prompt:
+            raise AssertionError("missing no-citation requirement")
         if "exactly these two sections" in system_prompt:
             raise AssertionError("system prompt should not force rigid section output")
         if "a.txt" not in user_prompt:
@@ -62,13 +63,18 @@ class FakeChatClientWithEvidence:
             raise AssertionError("uploaded document catalog should be present")
         if "Conversation history:\nuser: Earlier message" not in user_prompt:
             raise AssertionError("conversation history should be present in user prompt")
-        return (
-            "Revenue was 20. [a.txt#0] Revenue is commonly calculated before subtracting expenses."
-        )
+        return "Revenue was 20. [a.txt#0] Revenue is commonly calculated before subtracting expenses."
+
+    async def stream_chat_response(self, system_prompt: str, user_prompt: str):
+        yield "Revenue was "
+        yield "20. [a.txt#0]"
 
 
 class FakeChatClientNotExpected:
     async def generate_chat_response(self, system_prompt: str, user_prompt: str) -> str:
+        raise AssertionError("chat client should not be called for inventory questions")
+
+    async def stream_chat_response(self, system_prompt: str, user_prompt: str):
         raise AssertionError("chat client should not be called for inventory questions")
 
 
@@ -88,7 +94,7 @@ def test_chat_returns_unknown_without_evidence() -> None:
     assert result.retrieved_count == 0
 
 
-def test_chat_returns_grounded_answer_with_citations() -> None:
+def test_chat_returns_grounded_answer_without_citations() -> None:
     service = ChatService(
         retrieval_service=FakeRetrievalWithEvidence(),
         chat_client=FakeChatClientWithEvidence(),
@@ -99,9 +105,25 @@ def test_chat_returns_grounded_answer_with_citations() -> None:
     result = asyncio.run(service.answer_question("What is revenue?", history))
 
     assert result.grounded is True
-    assert "[a.txt#0]" in result.answer
+    assert "[a.txt#0]" not in result.answer
     assert result.retrieved_count == 1
-    assert result.citations[0]["filename"] == "a.txt"
+    assert result.citations == []
+
+
+def test_chat_stream_returns_chunks() -> None:
+    service = ChatService(
+        retrieval_service=FakeRetrievalWithEvidence(),
+        chat_client=FakeChatClientWithEvidence(),
+        document_service=FakeDocumentService(),
+    )
+    history = [ConversationTurn(role="user", message="Earlier message")]
+
+    async def collect_chunks() -> list[str]:
+        stream = await service.stream_answer_question("What is revenue?", history)
+        return [chunk async for chunk in stream]
+
+    chunks = asyncio.run(collect_chunks())
+    assert len(chunks) == 2
 
 
 def test_chat_rejects_empty_history_message() -> None:

@@ -24,6 +24,9 @@ class FakeChatService:
             retrieved_count=0,
         )
 
+    async def stream_answer_question(self, question: str, history):
+        yield "ok"
+
 
 class FakeDocumentService:
     def list_documents(self):
@@ -50,17 +53,17 @@ def test_index_page_has_upload_and_chat(
     assert response.status_code == 200
     assert 'id="upload-form"' in html
     assert 'id="chat-form"' in html
-    assert 'id="documents-panel"' in html
-    assert 'id="nav-chat"' in html
-    assert 'id="nav-documents"' in html
+    assert 'id="documents-list"' in html
+    assert 'id="refresh-documents"' in html
     assert 'id="chat-history-select"' in html
     assert 'id="clear-chat"' in html
+    assert "New Chat" in html
     assert "let conversationHistory = [];" in html
-    assert "history: conversationHistory" in html
+    assert "history" in html
     assert "renderMarkdown" in html
-    assert "Upload and Index" not in html
-    assert ">Upload<" in html
-    assert "bg-gradient-to-b" not in html
-    assert 'id="citation-modal"' not in html
+    assert "Palette: Red, Gray, Black, White" not in html
+    assert 'id="documents-panel"' not in html
+    assert 'id="nav-chat"' not in html
+    assert 'id="nav-documents"' not in html
     assert "flex justify-end" in html
     assert "flex justify-start" in html

@@ -47,4 +47,11 @@ There are couple of things which needs to be fixed/implemented:
 4. Once the upload starts there is already a loader so no need to explictly write it down below in text Uploading document.
 5. Instead of having Clear Chat make it New Chat
 6. I see these texts [nitin.pdf#chunk_id=0, nitin.pdf#chunk_id=3] in the chatbot response. I don't need citations.
-7. 
+----------------------------
+
+There are couple of things which needs to be fixed/implemented:
+1. Remove the text from the UI that says: Palette: Red, Gray, Black, White
+2. Once the app restats all the saved chats are wiped out. It should be persisted properly.
+3. There should be no Documents tab. Documents shoulld be visible just below the Upload button with filename and delete button.
+
+----------------------------

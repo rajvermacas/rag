@@ -21,9 +21,9 @@ class FakeChatService:
         if question == "unknown":
             return ChatResult(
                 answer=(
-                    "From uploaded documents (with citations):\n"
+                    "From uploaded documents:\n"
                     f"{NO_DOCUMENT_EVIDENCE}\n\n"
-                    "From general knowledge (not from uploaded documents):\n"
+                    "From general knowledge:\n"
                     "I can still provide a high-level answer from general knowledge."
                 ),
                 citations=[],
@@ -32,19 +32,19 @@ class FakeChatService:
             )
         return ChatResult(
             answer="Revenue is 20.",
-            citations=[
-                {
-                    "doc_id": "doc-1",
-                    "filename": "a.txt",
-                    "chunk_id": "0",
-                    "score": 0.92,
-                    "page": None,
-                    "text": "The document says revenue is 20.",
-                }
-            ],
+            citations=[],
             grounded=True,
             retrieved_count=1,
         )
+
+    async def stream_answer_question(self, question: str, history):
+        if len(history) == 0:
+            raise AssertionError("history must be passed to chat stream service")
+        if question == "What is revenue?":
+            yield "Revenue "
+            yield "is 20."
+            return
+        yield "Unknown question."
 
 
 class FakeDocumentService:
@@ -100,8 +100,31 @@ def test_chat_returns_grounded_answer(required_env: None, monkeypatch: pytest.Mo
     assert response.status_code == 200
     assert response.json()["grounded"] is True
     assert response.json()["retrieved_count"] == 1
-    assert response.json()["citations"][0]["filename"] == "a.txt"
-    assert response.json()["citations"][0]["text"] == "The document says revenue is 20."
+    assert response.json()["answer"] == "Revenue is 20."
+    assert response.json()["citations"] == []
+
+
+def test_chat_stream_returns_chunked_answer(
+    required_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_services = AppServices(
+        ingest_service=FakeIngestService(),
+        chat_service=FakeChatService(),
+        document_service=FakeDocumentService(),
+    )
+    monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/chat/stream",
+        json={
+            "message": "What is revenue?",
+            "history": [{"role": "user", "message": "Earlier message"}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.text == "Revenue is 20."
 
 
 def test_chat_requires_history_field(required_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
