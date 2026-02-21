@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from app.config import Settings, load_environment_from_dotenv
 from app.logging_config import configure_logging
-from app.services.chat import ChatService
+from app.services.chat import ChatService, ConversationTurn
 from app.services.ingest import IngestService
 from app.services.openrouter_client import OpenRouterClient
 from app.services.parsers import (
@@ -28,8 +28,14 @@ logger = logging.getLogger(__name__)
 templates = Jinja2Templates(directory="app/templates")
 
 
+class ChatHistoryTurn(BaseModel):
+    role: str
+    message: str
+
+
 class ChatRequest(BaseModel):
     message: str
+    history: list[ChatHistoryTurn]
 
 
 class ChatResponse(BaseModel):
@@ -118,9 +124,16 @@ def _register_routes(app: FastAPI, services: AppServices, settings: Settings) ->
 
     @app.post("/chat")
     async def chat(payload: ChatRequest) -> ChatResponse:
-        logger.info("chat_endpoint_called message_length=%s", len(payload.message))
+        logger.info(
+            "chat_endpoint_called message_length=%s history_turns=%s",
+            len(payload.message),
+            len(payload.history),
+        )
+        history = [
+            ConversationTurn(role=turn.role, message=turn.message) for turn in payload.history
+        ]
         try:
-            result = await services.chat_service.answer_question(payload.message)
+            result = await services.chat_service.answer_question(payload.message, history)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return ChatResponse(

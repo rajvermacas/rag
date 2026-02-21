@@ -25,7 +25,9 @@ class StatefulFakeChatService:
     def __init__(self, ingest_service: StatefulFakeIngestService) -> None:
         self._ingest_service = ingest_service
 
-    async def answer_question(self, question: str) -> ChatResult:
+    async def answer_question(self, question: str, history) -> ChatResult:
+        if len(history) == 0:
+            raise AssertionError("history must be passed to chat service")
         if not self._ingest_service.has_upload:
             return ChatResult(
                 answer=(
@@ -72,7 +74,13 @@ def test_upload_then_chat_returns_grounded_answer(
     )
     assert upload_response.status_code == 200
 
-    chat_response = client.post("/chat", json={"message": "What does the document say?"})
+    chat_response = client.post(
+        "/chat",
+        json={
+            "message": "What does the document say?",
+            "history": [{"role": "user", "message": "Earlier message"}],
+        },
+    )
     assert chat_response.status_code == 200
     payload = chat_response.json()
     assert payload["grounded"] is True

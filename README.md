@@ -55,3 +55,10 @@ pytest -v
 - `POST /upload` upload and index file
 - `POST /chat` hybrid document-grounded + general-knowledge answering
 - `GET /health` health check
+
+### Chat Request Body
+
+`POST /chat` requires both fields:
+
+- `message`: current user message
+- `history`: ordered prior turns, each with `role` (`user` or `assistant`) and `message`

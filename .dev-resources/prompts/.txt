@@ -10,3 +10,21 @@ And then there should be a chatbot which should help talk to the doc.
 
 Right now the chatbot clearly mentions that "I dont know" if the user prompt is generic. 
 I want the chatbot to intelligently say that This is what i found over the document as per the citation and here is what i know (coming from general training)
+-----------------------------------
+
+There are couple of things which needs to be fixed/implemented:
+1. The UI looks very dull. It should be flulid and interactive.
+2. The UI should follow the color combination Red, Gray, Black and White
+3. In new tab or section which can be navigated: The UI should show all the files already uploaded
+4. It should also have option to delete the file so that the indexing is also deleted of course
+5. The chatbot should be aware about all the documents that have been uploaded. and if asked about questions like what all documents you have access to then it should clearly share the names of the documents uploaded.
+6. The chat reponse on the UI doesn't look like markdown formatted text. It's plain raw text wher ** are even visible and doesn't look like a professional app altogether.
+7. Citations always shows something like `Citations: .txt#0` even if the response contains the text from the document uploaded.
+8. Fix the citations and it should be interactive in a way that clicking on the citation should quickly show the exact text from the document
+9. There is a bug. running below command it gives not found error:
+npm run build:css
+
+> rag-openrouter-ui@0.1.0 build:css
+> tailwindcss -i ./app/static/css/input.css -o ./app/static/css/output.css --minify
+
+sh: 1: tailwindcss: not found

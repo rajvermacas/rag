@@ -19,7 +19,7 @@ class FakeIngestService:
 
 
 class FakeChatService:
-    async def answer_question(self, question: str):
+    async def answer_question(self, question: str, history):
         raise AssertionError("Chat service should not be called in upload test")
 
 

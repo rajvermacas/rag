@@ -63,6 +63,7 @@
     const uploadStatus = document.getElementById("upload-status");
     const chatForm = document.getElementById("chat-form");
     const chatWindow = document.getElementById("chat-window");
+    const conversationHistory = [];
 
     uploadForm.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -100,7 +101,7 @@
       const response = await fetch("/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message }),
+        body: JSON.stringify({ message, history: conversationHistory }),
       });
       const payload = await response.json();
       if (!response.ok) {
@@ -120,6 +121,8 @@
         "beforeend",
         `<div class="mb-3 rounded-lg bg-emerald-100 p-2"><strong>Assistant:</strong> ${payload.answer}<div class="mt-2 text-xs">Citations: ${citationText}</div></div>`
       );
+      conversationHistory.push({ role: "user", message });
+      conversationHistory.push({ role: "assistant", message: payload.answer });
       chatWindow.scrollTop = chatWindow.scrollHeight;
     });
   </script>

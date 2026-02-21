@@ -16,7 +16,7 @@ class FakeIngestService:
 
 
 class FakeChatService:
-    async def answer_question(self, question: str) -> ChatResult:
+    async def answer_question(self, question: str, history) -> ChatResult:
         return ChatResult(
             answer="ok",
             citations=[],
@@ -41,3 +41,5 @@ def test_index_page_has_upload_and_chat(
     assert response.status_code == 200
     assert 'id="upload-form"' in html
     assert 'id="chat-form"' in html
+    assert "const conversationHistory = [];" in html
+    assert "history: conversationHistory" in html

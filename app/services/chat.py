@@ -30,6 +30,12 @@ class ChatResult:
     retrieved_count: int
 
 
+@dataclass(frozen=True)
+class ConversationTurn:
+    role: str
+    message: str
+
+
 class ChatService:
     """Answer questions using document evidence plus model general knowledge."""
 
@@ -37,23 +43,30 @@ class ChatService:
         self._retrieval_service = retrieval_service
         self._chat_client = chat_client
 
-    async def answer_question(self, question: str) -> ChatResult:
+    async def answer_question(self, question: str, history: list[ConversationTurn]) -> ChatResult:
         if question.strip() == "":
             raise ValueError("question must not be empty")
-        logger.info("chat_answer_started question_length=%s", len(question))
+        _validate_history(history)
+        logger.info(
+            "chat_answer_started question_length=%s history_turns=%s",
+            len(question),
+            len(history),
+        )
 
-        retrieved_chunks = await self._retrieve_chunks_or_empty(question)
+        retrieval_query = _build_retrieval_query(question, history)
+        retrieved_chunks = await self._retrieve_chunks_or_empty(retrieval_query)
         has_document_evidence = len(retrieved_chunks) > 0
 
         system_prompt = _build_system_prompt(has_document_evidence)
-        user_prompt = _build_user_prompt(question, retrieved_chunks)
+        user_prompt = _build_user_prompt(question, history, retrieved_chunks)
         answer = await self._chat_client.generate_chat_response(system_prompt, user_prompt)
         citations = [_chunk_to_citation(chunk) for chunk in retrieved_chunks]
 
         logger.info(
-            "chat_answer_completed grounded=%s citations=%s",
+            "chat_answer_completed grounded=%s citations=%s history_turns=%s",
             has_document_evidence,
             len(citations),
+            len(history),
         )
         return ChatResult(
             answer=answer,
@@ -75,30 +88,64 @@ class ChatService:
             return []
 
 
+def _validate_history(history: list[ConversationTurn]) -> None:
+    for turn in history:
+        if turn.role not in {"user", "assistant"}:
+            raise ValueError("history role must be either 'user' or 'assistant'")
+        if turn.message.strip() == "":
+            raise ValueError("history message must not be empty")
+
+
+def _build_retrieval_query(question: str, history: list[ConversationTurn]) -> str:
+    recent_turns = history[-6:]
+    if len(recent_turns) == 0:
+        return question
+    history_text = _format_history(recent_turns)
+    return f"Conversation history:\n{history_text}\n\nCurrent question:\n{question}"
+
+
 def _build_system_prompt(has_document_evidence: bool) -> str:
     if not has_document_evidence:
         document_section_instruction = (
-            "The document section must be exactly: "
-            f"'{NO_DOCUMENT_EVIDENCE}'."
+            f"If the provided context does not contain evidence, state exactly: "
+            f"'{NO_DOCUMENT_EVIDENCE}'. Then continue with a helpful answer using "
+            "general knowledge."
         )
     else:
         document_section_instruction = (
-            "In the document section, use only the provided context and add inline "
-            "citations in this format: [filename#chunk_id]."
+            "When using document evidence, cite it inline using this format: "
+            "[filename#chunk_id]."
         )
 
     return (
-        "You are a retrieval-augmented assistant with two responsibilities. "
-        "Always answer using exactly these two sections in order:\n"
-        "1) From uploaded documents (with citations):\n"
-        "2) From general knowledge (not from uploaded documents):\n"
+        "You are a conversational retrieval-augmented assistant. "
+        "Use the conversation history to keep context across turns. "
+        "Respond naturally as a normal conversation; do not force section headers "
+        "or fixed templates unless the user explicitly asks for them. "
         f"{document_section_instruction} "
-        "In the general knowledge section, clearly separate model knowledge from "
-        "document evidence and never imply it came from uploaded files."
+        "Never claim model general knowledge came from uploaded files."
     )
 
 
-def _build_user_prompt(question: str, chunks: list[IndexedChunk]) -> str:
+def _build_user_prompt(
+    question: str, history: list[ConversationTurn], chunks: list[IndexedChunk]
+) -> str:
+    history_text = _format_history(history)
+    context = _format_context(chunks)
+    return (
+        f"Conversation history:\n{history_text}\n\n"
+        f"Question:\n{question}\n\n"
+        f"Context:\n{context}"
+    )
+
+
+def _format_history(history: list[ConversationTurn]) -> str:
+    if len(history) == 0:
+        return "[none]"
+    return "\n".join([f"{turn.role}: {turn.message}" for turn in history])
+
+
+def _format_context(chunks: list[IndexedChunk]) -> str:
     chunk_blocks: list[str] = []
     for chunk in chunks:
         metadata = (
@@ -109,8 +156,7 @@ def _build_user_prompt(question: str, chunks: list[IndexedChunk]) -> str:
             f"page={chunk.page}"
         )
         chunk_blocks.append(f"[{metadata}]\n{chunk.text}")
-    context = "\n\n".join(chunk_blocks)
-    return f"Question:\n{question}\n\nContext:\n{context}"
+    return "\n\n".join(chunk_blocks)
 
 
 def _chunk_to_citation(chunk: IndexedChunk) -> dict[str, str | float | int | None]:

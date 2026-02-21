@@ -15,7 +15,9 @@ class FakeIngestService:
 
 
 class FakeChatService:
-    async def answer_question(self, question: str) -> ChatResult:
+    async def answer_question(self, question: str, history) -> ChatResult:
+        if len(history) == 0:
+            raise AssertionError("history must be passed to chat service")
         if question == "unknown":
             return ChatResult(
                 answer=(
@@ -54,7 +56,13 @@ def test_chat_returns_unknown_when_no_evidence(
     monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
     client = TestClient(create_app())
 
-    response = client.post("/chat", json={"message": "unknown"})
+    response = client.post(
+        "/chat",
+        json={
+            "message": "unknown",
+            "history": [{"role": "user", "message": "Earlier message"}],
+        },
+    )
 
     assert response.status_code == 200
     assert response.json()["grounded"] is False
@@ -70,9 +78,28 @@ def test_chat_returns_grounded_answer(required_env: None, monkeypatch: pytest.Mo
     monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
     client = TestClient(create_app())
 
-    response = client.post("/chat", json={"message": "What is revenue?"})
+    response = client.post(
+        "/chat",
+        json={
+            "message": "What is revenue?",
+            "history": [{"role": "user", "message": "Earlier message"}],
+        },
+    )
 
     assert response.status_code == 200
     assert response.json()["grounded"] is True
     assert response.json()["retrieved_count"] == 1
     assert response.json()["citations"][0]["filename"] == "a.txt"
+
+
+def test_chat_requires_history_field(required_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_services = AppServices(
+        ingest_service=FakeIngestService(),
+        chat_service=FakeChatService(),
+    )
+    monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
+    client = TestClient(create_app())
+
+    response = client.post("/chat", json={"message": "What is revenue?"})
+
+    assert response.status_code == 422
