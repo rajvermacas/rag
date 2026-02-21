@@ -212,3 +212,17 @@ def test_compare_stream_returns_400_for_missing_required_fields(
     assert response.json() == {
         "detail": f"invalid battleground compare payload: {missing_field} is required"
     }
+
+
+@pytest.mark.parametrize("invalid_payload", [[], "not-an-object"])
+def test_compare_stream_returns_400_for_non_object_json_payloads(
+    required_env: None, monkeypatch: pytest.MonkeyPatch, invalid_payload: object
+) -> None:
+    client = _build_client(monkeypatch, FakeBattlegroundMustNotBeCalledService())
+
+    response = client.post("/battleground/compare/stream", json=invalid_payload)
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "detail": "invalid battleground compare payload: payload must be a JSON object"
+    }

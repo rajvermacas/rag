@@ -215,6 +215,8 @@ def _build_battleground_validation_detail(errors: list[dict[str, Any]]) -> str:
 
 
 def _build_battleground_validation_message(error: dict[str, Any]) -> str:
+    if _is_non_object_body_payload_error(error):
+        return "payload must be a JSON object"
     field_name = _extract_validation_field_name(error["loc"])
     if error["type"] == "missing":
         return f"{field_name} is required"
@@ -222,6 +224,14 @@ def _build_battleground_validation_message(error: dict[str, Any]) -> str:
     if message.startswith(f"{field_name} "):
         return message
     return f"{field_name}: {message}"
+
+
+def _is_non_object_body_payload_error(error: dict[str, Any]) -> bool:
+    location = tuple(error["loc"])
+    return location == ("body",) and error["type"] in {
+        "dict_type",
+        "model_attributes_type",
+    }
 
 
 def _extract_validation_field_name(location: tuple[Any, ...]) -> str:
