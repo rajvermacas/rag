@@ -54,8 +54,8 @@
   }
 
   function initializeBattlegroundScaffold() {
-    ensureSelectHasPlaceholder(modelASelect, "Select model A");
-    ensureSelectHasPlaceholder(modelBSelect, "Select model B");
+    ensureSelectHasPlaceholder(modelASelect);
+    ensureSelectHasPlaceholder(modelBSelect);
     battlegroundStatus.textContent = "Battleground scaffold ready. Model loading arrives in a later task.";
     modelAOutput.textContent = "Model A response will appear here.";
     modelBOutput.textContent = "Model B response will appear here.";
@@ -66,16 +66,16 @@
     });
   }
 
-  function ensureSelectHasPlaceholder(selectElement, expectedLabel) {
+  function ensureSelectHasPlaceholder(selectElement) {
     if (selectElement.options.length === 0) {
       throw new Error(`select '${selectElement.id}' must include at least one option`);
     }
     const firstOption = selectElement.options[0];
-    if (firstOption.text !== expectedLabel) {
-      throw new Error(`select '${selectElement.id}' placeholder must be '${expectedLabel}'`);
-    }
     if (firstOption.value !== "") {
       throw new Error(`select '${selectElement.id}' placeholder value must be empty`);
+    }
+    if (firstOption.text.trim().length === 0) {
+      throw new Error(`select '${selectElement.id}' placeholder label must not be empty`);
     }
   }
 })();

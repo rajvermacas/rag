@@ -1,3 +1,7 @@
+import json
+import shutil
+import subprocess
+
 import pytest
 
 pytest.importorskip("fastapi")
@@ -34,6 +38,48 @@ class FakeDocumentService:
 
     def delete_document(self, doc_id: str):
         raise AssertionError("Document service should not be called in index test")
+
+
+def _run_remove_citation_artifacts(script_source: str, input_text: str) -> str:
+    node_path = shutil.which("node")
+    if node_path is None:
+        raise RuntimeError("node executable is required for ui common.js behavior test")
+
+    harness = f"""
+const commonScript = {json.dumps(script_source)};
+const inputText = {json.dumps(input_text)};
+globalThis.window = globalThis;
+globalThis.marked = {{
+  setOptions: () => undefined,
+  parse: (value) => value,
+}};
+globalThis.DOMPurify = {{
+  sanitize: (value) => value,
+}};
+eval(commonScript);
+const result = window.RagCommon.removeCitationArtifacts(inputText);
+if (typeof result !== "string") {{
+  throw new Error("removeCitationArtifacts must return a string");
+}}
+process.stdout.write(JSON.stringify({{ result }}));
+"""
+    completed = subprocess.run(
+        [node_path, "-e", harness],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        error_output = completed.stderr.strip()
+        raise RuntimeError(f"node harness failed for common.js: {error_output}")
+
+    payload = json.loads(completed.stdout)
+    if "result" not in payload:
+        raise RuntimeError("node harness output missing 'result'")
+    result = payload["result"]
+    if not isinstance(result, str):
+        raise RuntimeError("node harness output 'result' must be a string")
+    return result
 
 
 def test_index_page_has_chat_and_battleground_scaffolds(
@@ -74,7 +120,7 @@ def test_index_page_has_chat_and_battleground_scaffolds(
     assert 'id="nav-documents"' not in html
 
 
-def test_common_script_preserves_markdown_line_breaks(
+def test_common_script_removes_citation_artifacts_without_collapsing_newlines(
     required_env: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake_services = AppServices(
@@ -88,8 +134,9 @@ def test_common_script_preserves_markdown_line_breaks(
     client = TestClient(create_app())
 
     response = client.get("/static/js/common.js")
-    body = response.text
-
     assert response.status_code == 200
-    assert '.replace(/[ \\t]{2,}/g, " ")' in body
-    assert '.replace(/\\s{2,}/g, " ")' not in body
+    cleaned = _run_remove_citation_artifacts(
+        response.text,
+        "Line one    with   spaces\n[source #1]Line two\t\twith tabs",
+    )
+    assert cleaned == "Line one with spaces\nLine two with tabs"
