@@ -15,7 +15,7 @@ def test_missing_required_env_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CHUNK_SIZE", "800")
     monkeypatch.setenv("CHUNK_OVERLAP", "120")
     monkeypatch.setenv("RETRIEVAL_TOP_K", "5")
-    monkeypatch.setenv("MIN_RELEVANCE_SCORE", "0.75")
+    monkeypatch.setenv("MIN_RELEVANCE_SCORE", "0.4")
     monkeypatch.setenv("APP_LOG_LEVEL", "INFO")
 
     with pytest.raises(
@@ -34,7 +34,7 @@ def test_invalid_integer_env_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CHUNK_SIZE", "800")
     monkeypatch.setenv("CHUNK_OVERLAP", "120")
     monkeypatch.setenv("RETRIEVAL_TOP_K", "5")
-    monkeypatch.setenv("MIN_RELEVANCE_SCORE", "0.75")
+    monkeypatch.setenv("MIN_RELEVANCE_SCORE", "0.4")
     monkeypatch.setenv("APP_LOG_LEVEL", "INFO")
 
     with pytest.raises(
@@ -50,7 +50,7 @@ def test_settings_from_env_success(required_env: None) -> None:
     assert settings.max_upload_mb == 25
     assert settings.chunk_size == 800
     assert settings.chunk_overlap == 120
-    assert settings.min_relevance_score == 0.75
+    assert settings.min_relevance_score == 0.4
     assert settings.app_log_level == "INFO"
 
 

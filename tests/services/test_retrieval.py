@@ -83,6 +83,31 @@ class FakeVectorStore:
         ]
 
 
+def test_filter_by_relevance_rejects_invalid_threshold() -> None:
+    results = [
+        IndexedChunk(
+            doc_id="d1",
+            filename="a.txt",
+            chunk_id="0",
+            text="result",
+            score=0.5,
+            page=None,
+        )
+    ]
+    with pytest.raises(ValueError, match="min_relevance_score must be between 0.0 and 1.0"):
+        filter_by_relevance(results, 1.2)
+
+
+def test_retrieval_service_rejects_invalid_threshold() -> None:
+    with pytest.raises(ValueError, match="min_relevance_score must be between 0.0 and 1.0"):
+        RetrievalService(
+            embed_client=FakeEmbedClient(),
+            vector_store=FakeVectorStore(),
+            top_k=3,
+            min_relevance_score=-0.1,
+        )
+
+
 def test_retrieval_service_returns_filtered_results() -> None:
     retrieval_service = RetrievalService(
         embed_client=FakeEmbedClient(),

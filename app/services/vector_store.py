@@ -97,8 +97,14 @@ def _convert_query_result(raw_result: dict) -> list[IndexedChunk]:
                 filename=str(metadata["filename"]),
                 chunk_id=str(metadata["chunk_id"]),
                 text=str(document),
-                score=1.0 - float(distance),
+                score=_distance_to_relevance_score(float(distance)),
                 page=metadata.get("page"),
             )
         )
     return items
+
+
+def _distance_to_relevance_score(distance: float) -> float:
+    if distance < 0.0:
+        raise ValueError(f"distance must be non-negative, got: {distance}")
+    return 1.0 / (1.0 + distance)
