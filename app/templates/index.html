@@ -726,7 +726,7 @@
       if (typeof text !== "string") {
         throw new Error("citation cleanup input must be a string");
       }
-      return text.replace(CITATION_ARTIFACT_PATTERN, "").replace(/\s{2,}/g, " ").trimStart();
+      return text.replace(CITATION_ARTIFACT_PATTERN, "").replace(/[ \t]{2,}/g, " ").trimStart();
     }
 
     function escapeHtml(value) {

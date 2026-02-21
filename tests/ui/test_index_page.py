@@ -67,3 +67,22 @@ def test_index_page_has_upload_and_chat(
     assert 'id="nav-documents"' not in html
     assert "flex justify-end" in html
     assert "flex justify-start" in html
+
+
+def test_index_page_preserves_markdown_line_breaks(
+    required_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_services = AppServices(
+        ingest_service=FakeIngestService(),
+        chat_service=FakeChatService(),
+        document_service=FakeDocumentService(),
+    )
+    monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
+    client = TestClient(create_app())
+
+    response = client.get("/")
+    html = response.text
+
+    assert response.status_code == 200
+    assert '.replace(/[ \\t]{2,}/g, " ")' in html
+    assert '.replace(/\\s{2,}/g, " ")' not in html
