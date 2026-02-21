@@ -40,11 +40,114 @@ class FakeDocumentService:
         raise AssertionError("Document service should not be called in index test")
 
 
-def _run_remove_citation_artifacts(script_source: str, input_text: str) -> str:
+_CHAT_SESSION_HARNESS_TEMPLATE = """
+(async () => {
+const commonScript = __COMMON_SCRIPT__;
+const chatScript = __CHAT_SCRIPT__;
+const defaultGreeting = __DEFAULT_GREETING__;
+const localStorageRecords = new Map();
+const windowListeners = new Map();
+
+function createElement(id, tagName = "div") {
+  const listeners = new Map();
+  return {
+    id,
+    tagName,
+    value: "",
+    disabled: false,
+    className: "",
+    textContent: "",
+    innerHTML: "",
+    children: [],
+    scrollTop: 0,
+    scrollHeight: 0,
+    classList: { add: () => undefined, remove: () => undefined },
+    append: function(child) { this.children.push(child); this.scrollHeight = this.children.length; },
+    querySelector: () => createElement("", "button"),
+    addEventListener: function(eventName, handler) {
+      if (!listeners.has(eventName)) listeners.set(eventName, []);
+      listeners.get(eventName).push(handler);
+    },
+    click: function() {
+      const handlers = listeners.get("click") || [];
+      handlers.forEach((handler) => handler({ preventDefault: () => undefined }));
+    },
+    reset: () => undefined,
+  };
+}
+
+const ids = [
+  "upload-form","upload-button","upload-loader","upload-button-label","upload-status",
+  "refresh-documents","documents-list","documents-status","chat-form","chat-button",
+  "chat-window","chat-history-select","clear-chat"
+];
+const elements = Object.fromEntries(ids.map((id) => [id, createElement(id)]));
+globalThis.window = globalThis;
+globalThis.document = {
+  getElementById: (id) => (id in elements ? elements[id] : null),
+  createElement: (tag) => createElement("", tag),
+};
+globalThis.localStorage = {
+  getItem: (key) => (localStorageRecords.has(key) ? localStorageRecords.get(key) : null),
+  setItem: (key, value) => localStorageRecords.set(key, value),
+};
+globalThis.crypto = { randomUUID: (() => { let n = 0; return () => `uuid-${++n}`; })() };
+globalThis.fetch = async (url) => {
+  if (url === "/documents") return { ok: true, json: async () => ({ documents: [] }) };
+  throw new Error(`unexpected fetch url: ${url}`);
+};
+globalThis.confirm = () => true;
+globalThis.marked = { setOptions: () => undefined, parse: (value) => value };
+globalThis.DOMPurify = { sanitize: (value) => value };
+globalThis.addEventListener = (eventName, handler) => {
+  if (!windowListeners.has(eventName)) windowListeners.set(eventName, []);
+  windowListeners.get(eventName).push(handler);
+};
+eval(commonScript);
+eval(chatScript);
+for (const handler of windowListeners.get("load") || []) {
+  await handler();
+}
+
+const initialPayload = JSON.parse(localStorageRecords.get("rag-chat-sessions"));
+const initialSession = initialPayload.sessions[0];
+const initialMessage = initialSession.messages[0];
+elements["clear-chat"].click();
+const afterClickPayload = JSON.parse(localStorageRecords.get("rag-chat-sessions"));
+
+process.stdout.write(JSON.stringify({
+  initialSessionCount: initialPayload.sessions.length,
+  initialHistoryLength: initialSession.history.length,
+  initialGreetingText: initialMessage.text,
+  isInitialGreetingAssistant: initialMessage.role === "assistant",
+  greetingMatchesDefault: initialMessage.text === defaultGreeting,
+  afterClickSessionCount: afterClickPayload.sessions.length
+}));
+})().catch((error) => {
+  process.stderr.write(String(error));
+  process.exit(1);
+});
+"""
+
+
+def _run_node_harness(harness: str, context: str) -> str:
     node_path = shutil.which("node")
     if node_path is None:
-        raise RuntimeError("node executable is required for ui common.js behavior test")
+        raise RuntimeError(f"node executable is required for {context}")
 
+    completed = subprocess.run(
+        [node_path, "-e", harness],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        error_output = completed.stderr.strip()
+        raise RuntimeError(f"node harness failed for {context}: {error_output}")
+    return completed.stdout
+
+
+def _run_remove_citation_artifacts(script_source: str, input_text: str) -> str:
     harness = f"""
 const commonScript = {json.dumps(script_source)};
 const inputText = {json.dumps(input_text)};
@@ -63,23 +166,24 @@ if (typeof result !== "string") {{
 }}
 process.stdout.write(JSON.stringify({{ result }}));
 """
-    completed = subprocess.run(
-        [node_path, "-e", harness],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if completed.returncode != 0:
-        error_output = completed.stderr.strip()
-        raise RuntimeError(f"node harness failed for common.js: {error_output}")
-
-    payload = json.loads(completed.stdout)
+    payload = json.loads(_run_node_harness(harness, "ui common.js behavior test"))
     if "result" not in payload:
         raise RuntimeError("node harness output missing 'result'")
     result = payload["result"]
     if not isinstance(result, str):
         raise RuntimeError("node harness output 'result' must be a string")
     return result
+
+
+def _run_chat_session_harness(common_script: str, chat_script: str) -> dict[str, object]:
+    harness = _CHAT_SESSION_HARNESS_TEMPLATE
+    harness = harness.replace("__COMMON_SCRIPT__", json.dumps(common_script))
+    harness = harness.replace("__CHAT_SCRIPT__", json.dumps(chat_script))
+    harness = harness.replace("__DEFAULT_GREETING__", json.dumps("Hello! How can I assist you today?"))
+    payload = json.loads(_run_node_harness(harness, "ui chat.js behavior test"))
+    if not isinstance(payload, dict):
+        raise RuntimeError("node harness output for chat.js must be an object")
+    return payload
 
 
 def test_index_page_has_chat_and_battleground_scaffolds(
@@ -142,7 +246,7 @@ def test_common_script_removes_citation_artifacts_without_collapsing_newlines(
     assert cleaned == "Line one with spaces\nLine two with tabs"
 
 
-def test_chat_script_uses_updated_default_greeting_for_initial_and_new_chat(
+def test_chat_script_keeps_single_session_when_new_chat_clicked_from_pristine_greeting(
     required_env: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake_services = AppServices(
@@ -155,12 +259,15 @@ def test_chat_script_uses_updated_default_greeting_for_initial_and_new_chat(
     monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
     client = TestClient(create_app())
 
-    response = client.get("/static/js/chat.js")
-    assert response.status_code == 200
-    script_source = response.text
-    assert 'const DEFAULT_CHAT_GREETING = "Hello! How can I assist you today?";' in script_source
-    assert script_source.count("appendAssistantMessage(DEFAULT_CHAT_GREETING);") == 2
-    assert (
-        "Hello. I can answer questions from uploaded files and show indexed files under the upload panel."
-        not in script_source
-    )
+    common_response = client.get("/static/js/common.js")
+    chat_response = client.get("/static/js/chat.js")
+    assert common_response.status_code == 200
+    assert chat_response.status_code == 200
+
+    payload = _run_chat_session_harness(common_response.text, chat_response.text)
+    assert payload["initialSessionCount"] == 1
+    assert payload["initialHistoryLength"] == 0
+    assert payload["isInitialGreetingAssistant"] is True
+    assert payload["initialGreetingText"] == "Hello! How can I assist you today?"
+    assert payload["greetingMatchesDefault"] is True
+    assert payload["afterClickSessionCount"] == 1

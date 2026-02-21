@@ -283,7 +283,7 @@
 
   function clearActiveChat() {
     const activeSession = getActiveSession();
-    if (activeSession.messages.length === 0 && activeSession.history.length === 0) {
+    if (isEmptyOrPristineGreetingSession(activeSession)) {
       return;
     }
     activeSession.label = `Chat ${new Date().toLocaleString()}`;
@@ -294,6 +294,19 @@
     renderChatHistoryOptions();
     renderActiveSessionMessages();
     persistChatState();
+  }
+
+  function isEmptyOrPristineGreetingSession(session) {
+    const hasNoMessages = session.messages.length === 0;
+    const hasNoHistory = session.history.length === 0;
+    if (hasNoMessages && hasNoHistory) {
+      return true;
+    }
+    if (!hasNoHistory || session.messages.length !== 1) {
+      return false;
+    }
+    const [onlyMessage] = session.messages;
+    return onlyMessage.role === "assistant" && onlyMessage.text === DEFAULT_CHAT_GREETING;
   }
 
   function renderChatHistoryOptions() {
