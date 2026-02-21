@@ -9,7 +9,7 @@ from app.services.vector_store import IndexedChunk
 
 logger = logging.getLogger(__name__)
 
-UNKNOWN_ANSWER = "I do not know from the provided documents."
+NO_DOCUMENT_EVIDENCE = "No relevant evidence found in uploaded documents."
 
 
 class RetrievalService(Protocol):
@@ -31,7 +31,7 @@ class ChatResult:
 
 
 class ChatService:
-    """Answer questions strictly using retrieved document context."""
+    """Answer questions using document evidence plus model general knowledge."""
 
     def __init__(self, retrieval_service: RetrievalService, chat_client: ChatClient) -> None:
         self._retrieval_service = retrieval_service
@@ -42,46 +42,59 @@ class ChatService:
             raise ValueError("question must not be empty")
         logger.info("chat_answer_started question_length=%s", len(question))
 
-        try:
-            retrieved_chunks = await self._retrieval_service.retrieve(question)
-        except ValueError as exc:
-            if str(exc) in {
-                "retrieval returned no results",
-                "no results passed relevance threshold",
-            }:
-                logger.info("chat_answer_unknown reason=%s", str(exc))
-                return ChatResult(
-                    answer=UNKNOWN_ANSWER,
-                    citations=[],
-                    grounded=False,
-                    retrieved_count=0,
-                )
-            raise
+        retrieved_chunks = await self._retrieve_chunks_or_empty(question)
+        has_document_evidence = len(retrieved_chunks) > 0
 
-        system_prompt = _build_system_prompt()
+        system_prompt = _build_system_prompt(has_document_evidence)
         user_prompt = _build_user_prompt(question, retrieved_chunks)
         answer = await self._chat_client.generate_chat_response(system_prompt, user_prompt)
         citations = [_chunk_to_citation(chunk) for chunk in retrieved_chunks]
 
         logger.info(
-            "chat_answer_completed grounded=true citations=%s",
+            "chat_answer_completed grounded=%s citations=%s",
+            has_document_evidence,
             len(citations),
         )
         return ChatResult(
             answer=answer,
             citations=citations,
-            grounded=True,
+            grounded=has_document_evidence,
             retrieved_count=len(retrieved_chunks),
         )
 
+    async def _retrieve_chunks_or_empty(self, question: str) -> list[IndexedChunk]:
+        try:
+            return await self._retrieval_service.retrieve(question)
+        except ValueError as exc:
+            if str(exc) not in {
+                "retrieval returned no results",
+                "no results passed relevance threshold",
+            }:
+                raise
+            logger.info("chat_retrieval_no_evidence reason=%s", str(exc))
+            return []
 
-def _build_system_prompt() -> str:
+
+def _build_system_prompt(has_document_evidence: bool) -> str:
+    if not has_document_evidence:
+        document_section_instruction = (
+            "The document section must be exactly: "
+            f"'{NO_DOCUMENT_EVIDENCE}'."
+        )
+    else:
+        document_section_instruction = (
+            "In the document section, use only the provided context and add inline "
+            "citations in this format: [filename#chunk_id]."
+        )
+
     return (
-        "You are a document-grounded assistant. "
-        "Answer only from the provided context chunks. "
-        "If the context does not contain the answer, reply exactly: "
-        "'I do not know from the provided documents.' "
-        "Cite evidence using the provided chunk metadata."
+        "You are a retrieval-augmented assistant with two responsibilities. "
+        "Always answer using exactly these two sections in order:\n"
+        "1) From uploaded documents (with citations):\n"
+        "2) From general knowledge (not from uploaded documents):\n"
+        f"{document_section_instruction} "
+        "In the general knowledge section, clearly separate model knowledge from "
+        "document evidence and never imply it came from uploaded files."
     )
 
 

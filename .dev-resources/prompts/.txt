@@ -6,3 +6,7 @@ A UI should be built using tailwind css, fastapi.
 There should be a file upload button which should read files like pdf, docx, text.
 
 And then there should be a chatbot which should help talk to the doc.
+-----------------------------------
+
+Right now the chatbot clearly mentions that "I dont know" if the user prompt is generic. 
+I want the chatbot to intelligently say that This is what i found over the document as per the citation and here is what i know (coming from general training)

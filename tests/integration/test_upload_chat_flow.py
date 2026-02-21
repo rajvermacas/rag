@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 import app.main as main_module
 from app.main import AppServices, create_app
-from app.services.chat import ChatResult, UNKNOWN_ANSWER
+from app.services.chat import ChatResult, NO_DOCUMENT_EVIDENCE
 from app.services.ingest import IngestResult
 
 
@@ -28,7 +28,12 @@ class StatefulFakeChatService:
     async def answer_question(self, question: str) -> ChatResult:
         if not self._ingest_service.has_upload:
             return ChatResult(
-                answer=UNKNOWN_ANSWER,
+                answer=(
+                    "From uploaded documents (with citations):\n"
+                    f"{NO_DOCUMENT_EVIDENCE}\n\n"
+                    "From general knowledge (not from uploaded documents):\n"
+                    "I can still provide a broad answer from general knowledge."
+                ),
                 citations=[],
                 grounded=False,
                 retrieved_count=0,

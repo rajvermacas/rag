@@ -7,7 +7,7 @@ Single-user RAG pipeline built with FastAPI and Tailwind CSS.
 - Upload and index `pdf`, `docx`, and `txt` files
 - Local vector storage with ChromaDB
 - OpenRouter embeddings + chat generation
-- Strict grounded answers with citations
+- Hybrid answers with document citations plus general knowledge
 - Fail-fast configuration validation (no silent defaults)
 
 ## Required Environment Variables
@@ -53,5 +53,5 @@ pytest -v
 
 - `GET /` UI page
 - `POST /upload` upload and index file
-- `POST /chat` grounded question answering
+- `POST /chat` hybrid document-grounded + general-knowledge answering
 - `GET /health` health check

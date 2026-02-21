@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 
 import app.main as main_module
 from app.main import AppServices, create_app
-from app.services.chat import ChatResult, UNKNOWN_ANSWER
+from app.services.chat import ChatResult, NO_DOCUMENT_EVIDENCE
 
 
 class FakeIngestService:
@@ -18,7 +18,12 @@ class FakeChatService:
     async def answer_question(self, question: str) -> ChatResult:
         if question == "unknown":
             return ChatResult(
-                answer=UNKNOWN_ANSWER,
+                answer=(
+                    "From uploaded documents (with citations):\n"
+                    f"{NO_DOCUMENT_EVIDENCE}\n\n"
+                    "From general knowledge (not from uploaded documents):\n"
+                    "I can still provide a high-level answer from general knowledge."
+                ),
                 citations=[],
                 grounded=False,
                 retrieved_count=0,
@@ -53,7 +58,7 @@ def test_chat_returns_unknown_when_no_evidence(
 
     assert response.status_code == 200
     assert response.json()["grounded"] is False
-    assert response.json()["answer"] == UNKNOWN_ANSWER
+    assert NO_DOCUMENT_EVIDENCE in response.json()["answer"]
     assert response.json()["citations"] == []
 
 
