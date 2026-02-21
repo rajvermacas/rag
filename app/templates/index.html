@@ -7,6 +7,8 @@
   <link rel="stylesheet" href="/static/css/output.css" />
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.6/dist/purify.min.js"></script>
+  <script src="/static/js/chat_highlight.js"></script>
+  <script src="/static/js/chat_storage_migration.js"></script>
 </head>
 <body class="min-h-screen bg-zinc-100 text-zinc-900">
   <main class="mx-auto max-w-6xl px-4 py-8 md:py-12">
@@ -110,6 +112,12 @@
     if (typeof DOMPurify === "undefined") {
       throw new Error("DOMPurify is required for markdown rendering");
     }
+    if (typeof applyDocumentHighlights === "undefined") {
+      throw new Error("chat_highlight.js is required for citation highlighting");
+    }
+    if (typeof migrateLegacyChatState === "undefined") {
+      throw new Error("chat_storage_migration.js is required for persisted state migration");
+    }
 
     const CHAT_STORAGE_KEY = "rag-chat-sessions";
     const CITATION_ARTIFACT_PATTERN = /\[[^\]\n]*(?:#chunk_id\s*=\s*\d+|#\d+)[^\]\n]*\]/gi;
@@ -201,8 +209,10 @@
 
         const thinkingMessageId = appendThinkingMessage();
         try {
-          const answer = await streamAssistantResponse(message, conversationHistory, thinkingMessageId);
-          conversationHistory.push({ role: "assistant", message: answer });
+          const chatResult = await fetchAssistantResponse(message, conversationHistory);
+          removeMessageById(thinkingMessageId);
+          appendAssistantMessage(chatResult.answer, chatResult.citations);
+          conversationHistory.push({ role: "assistant", message: chatResult.answer });
           persistChatState();
         } catch (error) {
           removeMessageById(thinkingMessageId);
@@ -246,6 +256,33 @@
         throw new Error(`'${key}' must be a number in ${context}`);
       }
       return value;
+    }
+
+    function requireCitations(record, key, context) {
+      if (!(key in record)) {
+        throw new Error(`missing '${key}' in ${context}`);
+      }
+      const citations = record[key];
+      if (!Array.isArray(citations)) {
+        throw new Error(`'${key}' must be an array in ${context}`);
+      }
+      return citations.map((citation, index) => {
+        return validateCitationRecord(citation, `${context}.${key}[${index}]`);
+      });
+    }
+
+    function validateCitationRecord(record, context) {
+      const text = requireString(record, "text", context).trim();
+      if (text === "") {
+        throw new Error(`citation text must not be empty in ${context}`);
+      }
+      return {
+        text,
+        filename: requireString(record, "filename", context),
+        doc_id: requireString(record, "doc_id", context),
+        chunk_id: requireString(record, "chunk_id", context),
+        score: requireNumber(record, "score", context),
+      };
     }
 
     function requireErrorMessage(error) {
@@ -311,7 +348,8 @@
       chatSessions.push(session);
       setActiveSession(session.id);
       appendAssistantMessage(
-        "Hello. I can answer questions from uploaded files and show indexed files under the upload panel."
+        "Hello. I can answer questions from uploaded files and show indexed files under the upload panel.",
+        []
       );
       renderChatHistoryOptions();
       renderActiveSessionMessages();
@@ -343,8 +381,12 @@
         return null;
       }
       const parsedState = JSON.parse(rawState);
-      validatePersistedChatState(parsedState);
-      return parsedState;
+      const migratedState = migrateLegacyChatState(parsedState);
+      validatePersistedChatState(migratedState);
+      if (migratedState !== parsedState) {
+        localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(migratedState));
+      }
+      return migratedState;
     }
 
     function validatePersistedChatState(parsedState) {
@@ -403,8 +445,12 @@
         const messageContext = `${context}.messages[${messageIndex}]`;
         const role = requireString(entry, "role", messageContext);
         requireString(entry, "text", messageContext);
+        const citations = requireCitations(entry, "citations", messageContext);
         if (!["user", "assistant", "error"].includes(role)) {
           throw new Error(`unsupported message role in ${messageContext}: ${role}`);
+        }
+        if (role !== "assistant" && citations.length > 0) {
+          throw new Error(`non-assistant messages cannot include citations in ${messageContext}`);
         }
       });
     }
@@ -479,31 +525,45 @@
     }
 
     function appendUserMessage(message) {
-      addMessageToActiveSession("user", message);
+      addMessageToActiveSession("user", message, []);
     }
 
-    function appendAssistantMessage(markdownAnswer) {
-      addMessageToActiveSession("assistant", removeCitationArtifacts(markdownAnswer));
+    function appendAssistantMessage(markdownAnswer, citations) {
+      addMessageToActiveSession("assistant", removeCitationArtifacts(markdownAnswer), citations);
     }
 
     function appendThinkingMessage() {
-      return addMessageToActiveSession("thinking", "Thinking...");
+      return addMessageToActiveSession("thinking", "Thinking...", []);
     }
 
     function appendSystemError(errorText) {
-      addMessageToActiveSession("error", errorText);
+      addMessageToActiveSession("error", errorText, []);
     }
 
-    function addMessageToActiveSession(role, text) {
+    function addMessageToActiveSession(role, text, citations) {
       if (typeof role !== "string") {
         throw new Error("message role must be a string");
       }
       if (typeof text !== "string") {
         throw new Error("message text must be a string");
       }
+      if (!Array.isArray(citations)) {
+        throw new Error("message citations must be an array");
+      }
+      if (role !== "assistant" && citations.length > 0) {
+        throw new Error("only assistant messages can include citations");
+      }
+      const validatedCitations = citations.map((citation, index) => {
+        return validateCitationRecord(citation, `new_message.citations[${index}]`);
+      });
       const session = getActiveSession();
       const messageId = createSessionId();
-      session.messages.push({ id: messageId, role, text });
+      session.messages.push({
+        id: messageId,
+        role,
+        text,
+        citations: validatedCitations,
+      });
       renderActiveSessionMessages();
       persistChatState();
       return messageId;
@@ -520,18 +580,6 @@
       persistChatState();
     }
 
-    function upsertStreamedAssistantMessage(messageId, rawText) {
-      const session = getActiveSession();
-      const entry = session.messages.find((item) => item.id === messageId);
-      if (typeof entry === "undefined") {
-        throw new Error(`chat message not found: ${messageId}`);
-      }
-      entry.role = "assistant";
-      entry.text = removeCitationArtifacts(rawText);
-      renderActiveSessionMessages();
-      persistChatState();
-    }
-
     function renderActiveSessionMessages() {
       const session = getActiveSession();
       chatWindow.innerHTML = "";
@@ -542,14 +590,17 @@
     }
 
     function buildMessageElement(entry) {
-      if (!("role" in entry) || !("text" in entry)) {
-        throw new Error("chat entry must include role and text");
+      if (!("role" in entry) || !("text" in entry) || !("citations" in entry)) {
+        throw new Error("chat entry must include role, text, and citations");
       }
       if (entry.role === "user") {
         return buildUserMessageElement(entry.text);
       }
       if (entry.role === "assistant") {
-        return buildAssistantMessageElement(entry.text);
+        if (!Array.isArray(entry.citations)) {
+          throw new Error("assistant entry citations must be an array");
+        }
+        return buildAssistantMessageElement(entry.text, entry.citations);
       }
       if (entry.role === "thinking") {
         return buildThinkingMessageElement();
@@ -570,13 +621,18 @@
       return row;
     }
 
-    function buildAssistantMessageElement(markdownAnswer) {
+    function buildAssistantMessageElement(markdownAnswer, citations) {
       const row = document.createElement("div");
       row.className = "mb-3 flex justify-start";
       const wrapper = document.createElement("article");
       wrapper.className = "max-w-[85%] rounded-xl border border-red-200 bg-white p-3 shadow-sm";
-      const markdownHtml = renderMarkdown(removeCitationArtifacts(markdownAnswer));
-      wrapper.innerHTML = `<p class="text-xs font-semibold uppercase tracking-wide text-red-600">Assistant</p><div class="markdown-body mt-2 text-sm text-zinc-800">${markdownHtml}</div>`;
+      wrapper.innerHTML = "<p class=\"text-xs font-semibold uppercase tracking-wide text-red-600\">Assistant</p><div class=\"markdown-body mt-2 text-sm text-zinc-800\"></div>";
+      const markdownContainer = wrapper.querySelector(".markdown-body");
+      if (markdownContainer === null) {
+        throw new Error("assistant markdown container is required");
+      }
+      markdownContainer.innerHTML = renderMarkdown(removeCitationArtifacts(markdownAnswer));
+      applyDocumentHighlights(markdownContainer, citations);
       row.append(wrapper);
       return row;
     }
@@ -601,48 +657,27 @@
       return row;
     }
 
-    async function streamAssistantResponse(message, history, thinkingMessageId) {
-      const response = await fetch("/chat/stream", {
+    async function fetchAssistantResponse(message, history) {
+      const response = await fetch("/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message, history }),
       });
+      const payload = await response.json();
       if (!response.ok) {
-        const payload = await response.json();
-        throw new Error(requireString(payload, "detail", "chat stream error"));
+        throw new Error(requireString(payload, "detail", "chat error"));
       }
-      if (response.body === null) {
-        throw new Error("chat stream response body is missing");
+      const answer = requireString(payload, "answer", "chat response");
+      if (!("grounded" in payload) || typeof payload.grounded !== "boolean") {
+        throw new Error("'grounded' must be a boolean in chat response");
       }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let accumulatedText = "";
-
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) {
-          break;
-        }
-        const chunk = decoder.decode(value, { stream: true });
-        if (chunk === "") {
-          continue;
-        }
-        accumulatedText += chunk;
-        upsertStreamedAssistantMessage(thinkingMessageId, accumulatedText);
+      requireNumber(payload, "retrieved_count", "chat response");
+      const citations = requireCitations(payload, "citations", "chat response");
+      const cleanedAnswer = removeCitationArtifacts(answer).trim();
+      if (cleanedAnswer === "") {
+        throw new Error("chat returned an empty answer");
       }
-
-      const trailingChunk = decoder.decode();
-      if (trailingChunk !== "") {
-        accumulatedText += trailingChunk;
-        upsertStreamedAssistantMessage(thinkingMessageId, accumulatedText);
-      }
-
-      const finalAnswer = removeCitationArtifacts(accumulatedText).trim();
-      if (finalAnswer === "") {
-        throw new Error("chat stream returned an empty answer");
-      }
-      return finalAnswer;
+      return { answer: cleanedAnswer, citations };
     }
 
     async function loadDocuments() {

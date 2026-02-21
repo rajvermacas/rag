@@ -55,3 +55,11 @@ There are couple of things which needs to be fixed/implemented:
 3. There should be no Documents tab. Documents shoulld be visible just below the Upload button with filename and delete button.
 
 ----------------------------
+
+I want you to make a change on the UI chatbot. When the response is printed. The exact knowledge/text/number which is coming from the document, highlight it as green so that to the end user it is clearly visible that those facts are really coming from the document.
+Also when I hover over to the green highlighted text it should show which document was referred actually.
+-----------------------------
+
+There are couple of things which needs to be fixed/implemented:
+1. In the chatbot when I press enter, it should send the message. Right now I have to click on send button.
+2. 

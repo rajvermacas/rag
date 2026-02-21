@@ -61,6 +61,10 @@ def test_index_page_has_upload_and_chat(
     assert "let conversationHistory = [];" in html
     assert "history" in html
     assert "renderMarkdown" in html
+    assert 'fetch("/chat",' in html
+    assert 'fetch("/chat/stream")' not in html
+    assert '/static/js/chat_highlight.js' in html
+    assert "migrateLegacyChatState" in html
     assert "Palette: Red, Gray, Black, White" not in html
     assert 'id="documents-panel"' not in html
     assert 'id="nav-chat"' not in html

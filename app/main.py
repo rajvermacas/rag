@@ -39,9 +39,17 @@ class ChatRequest(BaseModel):
     history: list[ChatHistoryTurn]
 
 
+class ChatCitation(BaseModel):
+    text: str
+    filename: str
+    doc_id: str
+    chunk_id: str
+    score: float
+
+
 class ChatResponse(BaseModel):
     answer: str
-    citations: list[dict[str, Any]]
+    citations: list[ChatCitation]
     grounded: bool
     retrieved_count: int
 
@@ -188,7 +196,16 @@ def _register_routes(app: FastAPI, services: AppServices, settings: Settings) ->
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return ChatResponse(
             answer=result.answer,
-            citations=[],
+            citations=[
+                ChatCitation(
+                    text=str(citation["text"]),
+                    filename=str(citation["filename"]),
+                    doc_id=str(citation["doc_id"]),
+                    chunk_id=str(citation["chunk_id"]),
+                    score=float(citation["score"]),
+                )
+                for citation in result.citations
+            ],
             grounded=result.grounded,
             retrieved_count=result.retrieved_count,
         )

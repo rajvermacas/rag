@@ -94,7 +94,7 @@ def test_chat_returns_unknown_without_evidence() -> None:
     assert result.retrieved_count == 0
 
 
-def test_chat_returns_grounded_answer_without_citations() -> None:
+def test_chat_returns_grounded_answer_with_document_citations() -> None:
     service = ChatService(
         retrieval_service=FakeRetrievalWithEvidence(),
         chat_client=FakeChatClientWithEvidence(),
@@ -107,7 +107,9 @@ def test_chat_returns_grounded_answer_without_citations() -> None:
     assert result.grounded is True
     assert "[a.txt#0]" not in result.answer
     assert result.retrieved_count == 1
-    assert result.citations == []
+    assert len(result.citations) >= 1
+    assert result.citations[0]["filename"] == "a.txt"
+    assert "20" in str(result.citations[0]["text"])
 
 
 def test_chat_stream_returns_chunks() -> None:
