@@ -64,14 +64,24 @@ class OpenRouterClient:
     async def stream_chat_response(
         self, system_prompt: str, user_prompt: str
     ) -> AsyncIterator[str]:
+        async for chunk in self.stream_chat_response_with_model(
+            self._chat_model, system_prompt, user_prompt
+        ):
+            yield chunk
+
+    async def stream_chat_response_with_model(
+        self, model: str, system_prompt: str, user_prompt: str
+    ) -> AsyncIterator[str]:
+        if model.strip() == "":
+            raise ValueError("model must not be empty")
         _validate_prompt_inputs(system_prompt, user_prompt)
-        logger.info("openrouter_chat_stream_started")
-        payload = _build_chat_payload(self._chat_model, system_prompt, user_prompt, stream=True)
+        logger.info("openrouter_chat_stream_started model=%s", model)
+        payload = _build_chat_payload(model, system_prompt, user_prompt, stream=True)
         async for data_line in self._stream_post_data_lines("/chat/completions", payload):
             chunk = _extract_stream_chunk(data_line)
             if chunk != "":
                 yield chunk
-        logger.info("openrouter_chat_stream_completed")
+        logger.info("openrouter_chat_stream_completed model=%s", model)
 
     async def _post_json(self, path: str, payload: dict) -> Any:
         try:

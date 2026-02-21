@@ -121,3 +121,75 @@ def test_chat_stream_returns_chunks(monkeypatch: pytest.MonkeyPatch) -> None:
 
     chunks = asyncio.run(collect())
     assert chunks == ["Hello ", "world"]
+
+
+def test_stream_chat_with_model_override_uses_given_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_models: list[str] = []
+
+    async def fake_stream_post_data_lines(self, path: str, payload: dict):
+        if path != "/chat/completions":
+            raise AssertionError("unexpected path")
+        captured_models.append(payload["model"])
+        yield '{"choices":[{"delta":{"content":"ok"}}]}'
+
+    monkeypatch.setattr(OpenRouterClient, "_stream_post_data_lines", fake_stream_post_data_lines)
+    client = OpenRouterClient(
+        api_key="k", embed_model="openrouter/embed", chat_model="openrouter/default-chat"
+    )
+
+    async def collect() -> list[str]:
+        return [
+            chunk
+            async for chunk in client.stream_chat_response_with_model(
+                "custom/model", "system", "user"
+            )
+        ]
+
+    chunks = asyncio.run(collect())
+    assert chunks == ["ok"]
+    assert captured_models == ["custom/model"]
+
+
+def test_stream_chat_with_model_override_rejects_empty_model() -> None:
+    client = OpenRouterClient(
+        api_key="k", embed_model="openrouter/embed", chat_model="openrouter/default-chat"
+    )
+
+    async def collect() -> list[str]:
+        return [
+            chunk
+            async for chunk in client.stream_chat_response_with_model(
+                "   ", "system", "user"
+            )
+        ]
+
+    with pytest.raises(ValueError, match="model must not be empty"):
+        asyncio.run(collect())
+
+
+@pytest.mark.parametrize(
+    ("system_prompt", "user_prompt", "error_message"),
+    [
+        ("", "user", "system_prompt must not be empty"),
+        ("system", "", "user_prompt must not be empty"),
+    ],
+)
+def test_stream_chat_with_model_override_validates_prompts(
+    system_prompt: str, user_prompt: str, error_message: str
+) -> None:
+    client = OpenRouterClient(
+        api_key="k", embed_model="openrouter/embed", chat_model="openrouter/default-chat"
+    )
+
+    async def collect() -> list[str]:
+        return [
+            chunk
+            async for chunk in client.stream_chat_response_with_model(
+                "custom/model", system_prompt, user_prompt
+            )
+        ]
+
+    with pytest.raises(ValueError, match=error_message):
+        asyncio.run(collect())
