@@ -1,0 +1,75 @@
+import io
+
+import pytest
+
+pytest.importorskip("fastapi")
+
+from fastapi.testclient import TestClient
+
+import app.main as main_module
+from app.main import AppServices, create_app
+from app.services.chat import ChatResult, UNKNOWN_ANSWER
+from app.services.ingest import IngestResult
+
+
+class StatefulFakeIngestService:
+    def __init__(self) -> None:
+        self.has_upload = False
+
+    async def ingest_upload(self, upload) -> IngestResult:
+        self.has_upload = True
+        return IngestResult(doc_id="doc-123", chunks_indexed=2)
+
+
+class StatefulFakeChatService:
+    def __init__(self, ingest_service: StatefulFakeIngestService) -> None:
+        self._ingest_service = ingest_service
+
+    async def answer_question(self, question: str) -> ChatResult:
+        if not self._ingest_service.has_upload:
+            return ChatResult(
+                answer=UNKNOWN_ANSWER,
+                citations=[],
+                grounded=False,
+                retrieved_count=0,
+            )
+        return ChatResult(
+            answer="The document says hello world.",
+            citations=[
+                {
+                    "doc_id": "doc-123",
+                    "filename": "a.txt",
+                    "chunk_id": "0",
+                    "score": 0.9,
+                    "page": None,
+                }
+            ],
+            grounded=True,
+            retrieved_count=1,
+        )
+
+
+def test_upload_then_chat_returns_grounded_answer(
+    required_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ingest_service = StatefulFakeIngestService()
+    chat_service = StatefulFakeChatService(ingest_service)
+    fake_services = AppServices(
+        ingest_service=ingest_service,
+        chat_service=chat_service,
+    )
+    monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
+    client = TestClient(create_app())
+
+    upload_response = client.post(
+        "/upload",
+        files={"file": ("a.txt", io.BytesIO(b"hello world"), "text/plain")},
+    )
+    assert upload_response.status_code == 200
+
+    chat_response = client.post("/chat", json={"message": "What does the document say?"})
+    assert chat_response.status_code == 200
+    payload = chat_response.json()
+    assert payload["grounded"] is True
+    assert payload["retrieved_count"] == 1
+    assert payload["citations"][0]["filename"] == "a.txt"

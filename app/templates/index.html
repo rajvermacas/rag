@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RAG Document Chat</title>
+  <link rel="stylesheet" href="/static/css/output.css" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+</head>
+<body class="min-h-screen bg-slate-100 text-slate-900">
+  <main class="mx-auto max-w-4xl px-4 py-8">
+    <header class="mb-8">
+      <h1 class="text-3xl font-bold">RAG Document Chat</h1>
+      <p class="mt-2 text-sm text-slate-600">
+        Upload a PDF, DOCX, or TXT file and ask grounded questions.
+      </p>
+    </header>
+
+    <section class="mb-6 rounded-xl bg-white p-5 shadow-sm">
+      <h2 class="mb-3 text-xl font-semibold">Upload Document</h2>
+      <form id="upload-form" class="flex flex-col gap-3">
+        <input
+          class="rounded-lg border border-slate-300 p-2"
+          type="file"
+          name="file"
+          accept=".pdf,.docx,.txt"
+          required
+        />
+        <button
+          class="w-fit rounded-lg bg-slate-900 px-4 py-2 text-white"
+          type="submit"
+        >
+          Upload
+        </button>
+      </form>
+      <p id="upload-status" class="mt-3 text-sm text-slate-700"></p>
+    </section>
+
+    <section class="rounded-xl bg-white p-5 shadow-sm">
+      <h2 class="mb-3 text-xl font-semibold">Chat</h2>
+      <div
+        id="chat-window"
+        class="mb-4 h-80 overflow-y-auto rounded-lg border border-slate-200 p-3"
+      ></div>
+      <form id="chat-form" class="flex gap-2">
+        <input
+          class="flex-1 rounded-lg border border-slate-300 p-2"
+          type="text"
+          name="message"
+          placeholder="Ask a question about your documents..."
+          required
+        />
+        <button class="rounded-lg bg-slate-900 px-4 py-2 text-white" type="submit">
+          Send
+        </button>
+      </form>
+    </section>
+  </main>
+
+  <script>
+    const uploadForm = document.getElementById("upload-form");
+    const uploadStatus = document.getElementById("upload-status");
+    const chatForm = document.getElementById("chat-form");
+    const chatWindow = document.getElementById("chat-window");
+
+    uploadForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const formData = new FormData(uploadForm);
+      const response = await fetch("/upload", {
+        method: "POST",
+        body: formData,
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        uploadStatus.textContent = `Upload failed: ${payload.detail}`;
+        return;
+      }
+      uploadStatus.textContent = `Indexed ${payload.chunks_indexed} chunks (doc_id: ${payload.doc_id}).`;
+    });
+
+    chatForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const formData = new FormData(chatForm);
+      const rawMessage = formData.get("message");
+      if (rawMessage === null) {
+        throw new Error("message field is required");
+      }
+      const message = String(rawMessage).trim();
+      if (message === "") {
+        return;
+      }
+
+      chatWindow.insertAdjacentHTML(
+        "beforeend",
+        `<div class="mb-3 rounded-lg bg-slate-200 p-2"><strong>You:</strong> ${message}</div>`
+      );
+      chatForm.reset();
+
+      const response = await fetch("/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message }),
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        chatWindow.insertAdjacentHTML(
+          "beforeend",
+          `<div class="mb-3 rounded-lg bg-red-100 p-2"><strong>Error:</strong> ${payload.detail}</div>`
+        );
+        chatWindow.scrollTop = chatWindow.scrollHeight;
+        return;
+      }
+
+      const citations = payload.citations
+        .map((citation) => `${citation.filename}#${citation.chunk_id}`)
+        .join(", ");
+      const citationText = payload.citations.length === 0 ? "none" : citations;
+      chatWindow.insertAdjacentHTML(
+        "beforeend",
+        `<div class="mb-3 rounded-lg bg-emerald-100 p-2"><strong>Assistant:</strong> ${payload.answer}<div class="mt-2 text-xs">Citations: ${citationText}</div></div>`
+      );
+      chatWindow.scrollTop = chatWindow.scrollHeight;
+    });
+  </script>
+</body>
+</html>
