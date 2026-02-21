@@ -37,6 +37,15 @@ def _parse_float(name: str) -> float:
         ) from exc
 
 
+def _parse_required_csv(name: str) -> list[str]:
+    raw_value = _require_env(name)
+    values = [value.strip() for value in raw_value.split(",")]
+    if any(value == "" for value in values):
+        raise ValueError(f"{name} contains empty model id")
+    logger.debug("parsed_required_csv name=%s value_count=%d", name, len(values))
+    return values
+
+
 def load_environment_from_dotenv(dotenv_path: str) -> bool:
     if dotenv_path.strip() == "":
         raise ValueError("dotenv_path must not be empty")
@@ -52,6 +61,7 @@ class Settings:
     openrouter_api_key: str
     openrouter_chat_model: str
     openrouter_embed_model: str
+    openrouter_battleground_models: list[str]
     chroma_persist_dir: str
     chroma_collection_name: str
     max_upload_mb: int
@@ -67,6 +77,9 @@ class Settings:
             openrouter_api_key=_require_env("OPENROUTER_API_KEY"),
             openrouter_chat_model=_require_env("OPENROUTER_CHAT_MODEL"),
             openrouter_embed_model=_require_env("OPENROUTER_EMBED_MODEL"),
+            openrouter_battleground_models=_parse_required_csv(
+                "OPENROUTER_BATTLEGROUND_MODELS"
+            ),
             chroma_persist_dir=_require_env("CHROMA_PERSIST_DIR"),
             chroma_collection_name=_require_env("CHROMA_COLLECTION_NAME"),
             max_upload_mb=_parse_int("MAX_UPLOAD_MB"),

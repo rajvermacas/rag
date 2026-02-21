@@ -9,6 +9,10 @@ def test_missing_required_env_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.setenv("OPENROUTER_CHAT_MODEL", "openrouter/test-chat")
     monkeypatch.setenv("OPENROUTER_EMBED_MODEL", "openrouter/test-embed")
+    monkeypatch.setenv(
+        "OPENROUTER_BATTLEGROUND_MODELS",
+        "openai/gpt-4o-mini,anthropic/claude-3.5-sonnet",
+    )
     monkeypatch.setenv("CHROMA_PERSIST_DIR", "/tmp/chroma-test")
     monkeypatch.setenv("CHROMA_COLLECTION_NAME", "rag_docs")
     monkeypatch.setenv("MAX_UPLOAD_MB", "25")
@@ -28,6 +32,10 @@ def test_invalid_integer_env_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     monkeypatch.setenv("OPENROUTER_CHAT_MODEL", "openrouter/test-chat")
     monkeypatch.setenv("OPENROUTER_EMBED_MODEL", "openrouter/test-embed")
+    monkeypatch.setenv(
+        "OPENROUTER_BATTLEGROUND_MODELS",
+        "openai/gpt-4o-mini,anthropic/claude-3.5-sonnet",
+    )
     monkeypatch.setenv("CHROMA_PERSIST_DIR", "/tmp/chroma-test")
     monkeypatch.setenv("CHROMA_COLLECTION_NAME", "rag_docs")
     monkeypatch.setenv("MAX_UPLOAD_MB", "bad-int")
@@ -46,6 +54,10 @@ def test_invalid_integer_env_raises(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_settings_from_env_success(required_env: None) -> None:
     settings = Settings.from_env()
     assert settings.openrouter_api_key == "test-key"
+    assert settings.openrouter_battleground_models == [
+        "openai/gpt-4o-mini",
+        "anthropic/claude-3.5-sonnet",
+    ]
     assert settings.chroma_collection_name == "rag_docs"
     assert settings.max_upload_mb == 25
     assert settings.chunk_size == 800
@@ -65,3 +77,45 @@ def test_load_environment_from_dotenv_sets_environment(
 
     assert loaded is True
     assert os.getenv("OPENROUTER_API_KEY") == "from-dotenv"
+
+
+def test_missing_battleground_models_raises(
+    required_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("OPENROUTER_BATTLEGROUND_MODELS", raising=False)
+
+    with pytest.raises(
+        ValueError,
+        match="Missing required environment variable: OPENROUTER_BATTLEGROUND_MODELS",
+    ):
+        Settings.from_env()
+
+
+def test_invalid_battleground_models_empty_entry_raises(
+    required_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(
+        "OPENROUTER_BATTLEGROUND_MODELS", "openai/gpt-4o,,anthropic/claude"
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="OPENROUTER_BATTLEGROUND_MODELS contains empty model id",
+    ):
+        Settings.from_env()
+
+
+def test_battleground_models_trimmed_from_csv(
+    required_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(
+        "OPENROUTER_BATTLEGROUND_MODELS",
+        " openai/gpt-4o-mini , anthropic/claude-3.5-sonnet ",
+    )
+
+    settings = Settings.from_env()
+
+    assert settings.openrouter_battleground_models == [
+        "openai/gpt-4o-mini",
+        "anthropic/claude-3.5-sonnet",
+    ]

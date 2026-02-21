@@ -15,6 +15,10 @@ def required_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     monkeypatch.setenv("OPENROUTER_CHAT_MODEL", "openrouter/test-chat")
     monkeypatch.setenv("OPENROUTER_EMBED_MODEL", "openrouter/test-embed")
+    monkeypatch.setenv(
+        "OPENROUTER_BATTLEGROUND_MODELS",
+        "openai/gpt-4o-mini,anthropic/claude-3.5-sonnet",
+    )
     monkeypatch.setenv("CHROMA_PERSIST_DIR", "/tmp/chroma-test")
     monkeypatch.setenv("CHROMA_COLLECTION_NAME", "rag_docs")
     monkeypatch.setenv("MAX_UPLOAD_MB", "25")
