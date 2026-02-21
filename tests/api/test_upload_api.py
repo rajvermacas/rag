@@ -23,10 +23,19 @@ class FakeChatService:
         raise AssertionError("Chat service should not be called in upload test")
 
 
+class FakeDocumentService:
+    def list_documents(self):
+        return []
+
+    def delete_document(self, doc_id: str):
+        raise AssertionError("Document service should not be called in upload test")
+
+
 def test_upload_txt_indexes_document(required_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
     fake_services = AppServices(
         ingest_service=FakeIngestService(),
         chat_service=FakeChatService(),
+        document_service=FakeDocumentService(),
     )
     monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
     client = TestClient(create_app())
@@ -45,6 +54,7 @@ def test_upload_returns_400_for_validation_error(
     fake_services = AppServices(
         ingest_service=FakeIngestService(),
         chat_service=FakeChatService(),
+        document_service=FakeDocumentService(),
     )
     monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
     client = TestClient(create_app())

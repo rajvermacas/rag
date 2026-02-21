@@ -1,3 +1,46 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer components {
+  .markdown-body p {
+    @apply mb-2 leading-6 text-zinc-800;
+  }
+
+  .markdown-body p:last-child {
+    @apply mb-0;
+  }
+
+  .markdown-body ul,
+  .markdown-body ol {
+    @apply mb-2 ml-5 list-outside;
+  }
+
+  .markdown-body ul {
+    @apply list-disc;
+  }
+
+  .markdown-body ol {
+    @apply list-decimal;
+  }
+
+  .markdown-body code {
+    @apply rounded bg-zinc-200 px-1 py-0.5 text-xs text-zinc-900;
+  }
+
+  .markdown-body pre {
+    @apply overflow-x-auto rounded-lg border border-zinc-200 bg-zinc-900 p-3 text-zinc-100;
+  }
+
+  .markdown-body pre code {
+    @apply bg-transparent p-0 text-zinc-100;
+  }
+
+  .markdown-body blockquote {
+    @apply border-l-4 border-red-500 pl-3 italic text-zinc-700;
+  }
+
+  .markdown-body a {
+    @apply font-semibold text-red-700 underline;
+  }
+}

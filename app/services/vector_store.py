@@ -17,6 +17,13 @@ class IndexedChunk:
     page: int | None
 
 
+@dataclass(frozen=True)
+class IndexedDocument:
+    doc_id: str
+    filename: str
+    chunks_indexed: int
+
+
 class ChromaVectorStore:
     """ChromaDB persistence and retrieval service."""
 
@@ -73,6 +80,29 @@ class ChromaVectorStore:
         logger.info("chroma_query_completed result_count=%s", len(chunks))
         return chunks
 
+    def list_documents(self) -> list[IndexedDocument]:
+        logger.info("chroma_list_documents_started")
+        raw_result = self._collection.get(include=["metadatas"])
+        documents = _convert_document_result(raw_result)
+        logger.info("chroma_list_documents_completed document_count=%s", len(documents))
+        return documents
+
+    def delete_document(self, doc_id: str) -> int:
+        if doc_id.strip() == "":
+            raise ValueError("doc_id must not be empty")
+        logger.info("chroma_delete_document_started doc_id=%s", doc_id)
+        raw_result = self._collection.get(where={"doc_id": doc_id}, include=["metadatas"])
+        ids = _extract_ids(raw_result)
+        if len(ids) == 0:
+            raise ValueError(f"document not found: {doc_id}")
+        self._collection.delete(ids=ids)
+        logger.info(
+            "chroma_delete_document_completed doc_id=%s chunk_count=%s",
+            doc_id,
+            len(ids),
+        )
+        return len(ids)
+
     def _load_collection(self):
         try:
             import chromadb
@@ -102,6 +132,54 @@ def _convert_query_result(raw_result: dict) -> list[IndexedChunk]:
             )
         )
     return items
+
+
+def _convert_document_result(raw_result: dict) -> list[IndexedDocument]:
+    metadatas = _extract_metadatas(raw_result)
+    summaries: dict[str, IndexedDocument] = {}
+    for metadata in metadatas:
+        doc_id = str(metadata["doc_id"])
+        filename = str(metadata["filename"])
+        existing_summary = summaries.get(doc_id)
+        if existing_summary is None:
+            summaries[doc_id] = IndexedDocument(
+                doc_id=doc_id,
+                filename=filename,
+                chunks_indexed=1,
+            )
+            continue
+        if existing_summary.filename != filename:
+            raise ValueError(
+                f"inconsistent filename for doc_id={doc_id}: "
+                f"{existing_summary.filename} != {filename}"
+            )
+        summaries[doc_id] = IndexedDocument(
+            doc_id=existing_summary.doc_id,
+            filename=existing_summary.filename,
+            chunks_indexed=existing_summary.chunks_indexed + 1,
+        )
+    return sorted(
+        summaries.values(),
+        key=lambda document: (document.filename.lower(), document.doc_id),
+    )
+
+
+def _extract_metadatas(raw_result: dict) -> list[dict]:
+    if "metadatas" not in raw_result:
+        raise ValueError("missing key in Chroma result: metadatas")
+    metadatas = raw_result["metadatas"]
+    if metadatas is None:
+        raise ValueError("metadatas must not be None")
+    return [metadata for metadata in metadatas if metadata is not None]
+
+
+def _extract_ids(raw_result: dict) -> list[str]:
+    if "ids" not in raw_result:
+        raise ValueError("missing key in Chroma result: ids")
+    ids = raw_result["ids"]
+    if ids is None:
+        raise ValueError("ids must not be None")
+    return [str(item) for item in ids]
 
 
 def _distance_to_relevance_score(distance: float) -> float:

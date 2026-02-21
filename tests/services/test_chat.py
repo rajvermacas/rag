@@ -1,7 +1,7 @@
 import asyncio
 
 from app.services.chat import ChatService, ConversationTurn, NO_DOCUMENT_EVIDENCE
-from app.services.vector_store import IndexedChunk
+from app.services.vector_store import IndexedChunk, IndexedDocument
 
 
 class FakeRetrievalNoEvidence:
@@ -23,6 +23,14 @@ class FakeRetrievalWithEvidence:
         ]
 
 
+class FakeDocumentService:
+    def list_documents(self):
+        return [
+            IndexedDocument(doc_id="doc-1", filename="a.txt", chunks_indexed=1),
+            IndexedDocument(doc_id="doc-2", filename="b.pdf", chunks_indexed=3),
+        ]
+
+
 class FakeChatClientNoEvidence:
     async def generate_chat_response(self, system_prompt: str, user_prompt: str) -> str:
         if NO_DOCUMENT_EVIDENCE not in system_prompt:
@@ -33,6 +41,10 @@ class FakeChatClientNoEvidence:
             raise AssertionError("context section must be present")
         if "Conversation history:\nuser: Earlier message" not in user_prompt:
             raise AssertionError("conversation history should be present in user prompt")
+        if "Available uploaded documents:" not in user_prompt:
+            raise AssertionError("uploaded document catalog should be present")
+        if "a.txt" not in user_prompt or "b.pdf" not in user_prompt:
+            raise AssertionError("document filenames should be present in user prompt")
         return (
             f"{NO_DOCUMENT_EVIDENCE} Revenue can refer to total income before expenses."
         )
@@ -46,6 +58,8 @@ class FakeChatClientWithEvidence:
             raise AssertionError("system prompt should not force rigid section output")
         if "a.txt" not in user_prompt:
             raise AssertionError("expected chunk metadata in context")
+        if "Available uploaded documents:" not in user_prompt:
+            raise AssertionError("uploaded document catalog should be present")
         if "Conversation history:\nuser: Earlier message" not in user_prompt:
             raise AssertionError("conversation history should be present in user prompt")
         return (
@@ -53,10 +67,16 @@ class FakeChatClientWithEvidence:
         )
 
 
+class FakeChatClientNotExpected:
+    async def generate_chat_response(self, system_prompt: str, user_prompt: str) -> str:
+        raise AssertionError("chat client should not be called for inventory questions")
+
+
 def test_chat_returns_unknown_without_evidence() -> None:
     service = ChatService(
         retrieval_service=FakeRetrievalNoEvidence(),
         chat_client=FakeChatClientNoEvidence(),
+        document_service=FakeDocumentService(),
     )
     history = [ConversationTurn(role="user", message="Earlier message")]
 
@@ -72,6 +92,7 @@ def test_chat_returns_grounded_answer_with_citations() -> None:
     service = ChatService(
         retrieval_service=FakeRetrievalWithEvidence(),
         chat_client=FakeChatClientWithEvidence(),
+        document_service=FakeDocumentService(),
     )
     history = [ConversationTurn(role="user", message="Earlier message")]
 
@@ -87,6 +108,7 @@ def test_chat_rejects_empty_history_message() -> None:
     service = ChatService(
         retrieval_service=FakeRetrievalNoEvidence(),
         chat_client=FakeChatClientNoEvidence(),
+        document_service=FakeDocumentService(),
     )
     history = [ConversationTurn(role="assistant", message=" ")]
 
@@ -95,3 +117,19 @@ def test_chat_rejects_empty_history_message() -> None:
         raise AssertionError("expected ValueError for empty history message")
     except ValueError as exc:
         assert str(exc) == "history message must not be empty"
+
+
+def test_chat_answers_document_inventory_without_model_call() -> None:
+    service = ChatService(
+        retrieval_service=FakeRetrievalNoEvidence(),
+        chat_client=FakeChatClientNotExpected(),
+        document_service=FakeDocumentService(),
+    )
+    history = [ConversationTurn(role="user", message="Earlier message")]
+
+    result = asyncio.run(service.answer_question("What documents do you have access to?", history))
+
+    assert result.grounded is True
+    assert result.retrieved_count == 0
+    assert "a.txt" in result.answer
+    assert "b.pdf" in result.answer

@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass
 import logging
 from typing import Protocol
 
-from app.services.vector_store import IndexedChunk
+from app.services.vector_store import IndexedChunk, IndexedDocument
 
 
 logger = logging.getLogger(__name__)
@@ -20,6 +20,11 @@ class RetrievalService(Protocol):
 class ChatClient(Protocol):
     async def generate_chat_response(self, system_prompt: str, user_prompt: str) -> str:
         """Generate a chat response from OpenRouter."""
+
+
+class DocumentService(Protocol):
+    def list_documents(self) -> list[IndexedDocument]:
+        """Return all indexed documents."""
 
 
 @dataclass(frozen=True)
@@ -39,26 +44,46 @@ class ConversationTurn:
 class ChatService:
     """Answer questions using document evidence plus model general knowledge."""
 
-    def __init__(self, retrieval_service: RetrievalService, chat_client: ChatClient) -> None:
+    def __init__(
+        self,
+        retrieval_service: RetrievalService,
+        chat_client: ChatClient,
+        document_service: DocumentService,
+    ) -> None:
         self._retrieval_service = retrieval_service
         self._chat_client = chat_client
+        self._document_service = document_service
 
     async def answer_question(self, question: str, history: list[ConversationTurn]) -> ChatResult:
         if question.strip() == "":
             raise ValueError("question must not be empty")
         _validate_history(history)
+        documents = self._document_service.list_documents()
         logger.info(
-            "chat_answer_started question_length=%s history_turns=%s",
+            "chat_answer_started question_length=%s history_turns=%s available_documents=%s",
             len(question),
             len(history),
+            len(documents),
         )
+        if _is_document_inventory_question(question):
+            answer = _build_document_inventory_answer(documents)
+            logger.info(
+                "chat_answer_completed_inventory_request document_count=%s",
+                len(documents),
+            )
+            return ChatResult(
+                answer=answer,
+                citations=[],
+                grounded=len(documents) > 0,
+                retrieved_count=0,
+            )
 
         retrieval_query = _build_retrieval_query(question, history)
         retrieved_chunks = await self._retrieve_chunks_or_empty(retrieval_query)
         has_document_evidence = len(retrieved_chunks) > 0
 
         system_prompt = _build_system_prompt(has_document_evidence)
-        user_prompt = _build_user_prompt(question, history, retrieved_chunks)
+        user_prompt = _build_user_prompt(question, history, retrieved_chunks, documents)
         answer = await self._chat_client.generate_chat_response(system_prompt, user_prompt)
         citations = [_chunk_to_citation(chunk) for chunk in retrieved_chunks]
 
@@ -109,7 +134,9 @@ def _build_system_prompt(has_document_evidence: bool) -> str:
         document_section_instruction = (
             f"If the provided context does not contain evidence, state exactly: "
             f"'{NO_DOCUMENT_EVIDENCE}'. Then continue with a helpful answer using "
-            "general knowledge."
+            "general knowledge. Exception: if the user asks which uploaded documents "
+            "are available, answer directly from the 'Available uploaded documents' "
+            "section and do not output the no-evidence sentence."
         )
     else:
         document_section_instruction = (
@@ -122,18 +149,25 @@ def _build_system_prompt(has_document_evidence: bool) -> str:
         "Use the conversation history to keep context across turns. "
         "Respond naturally as a normal conversation; do not force section headers "
         "or fixed templates unless the user explicitly asks for them. "
+        "The prompt includes an 'Available uploaded documents' section; when the user "
+        "asks what documents are available, answer with exact filenames from that list. "
         f"{document_section_instruction} "
         "Never claim model general knowledge came from uploaded files."
     )
 
 
 def _build_user_prompt(
-    question: str, history: list[ConversationTurn], chunks: list[IndexedChunk]
+    question: str,
+    history: list[ConversationTurn],
+    chunks: list[IndexedChunk],
+    documents: list[IndexedDocument],
 ) -> str:
     history_text = _format_history(history)
     context = _format_context(chunks)
+    uploaded_documents = _format_uploaded_documents(documents)
     return (
         f"Conversation history:\n{history_text}\n\n"
+        f"Available uploaded documents:\n{uploaded_documents}\n\n"
         f"Question:\n{question}\n\n"
         f"Context:\n{context}"
     )
@@ -159,6 +193,18 @@ def _format_context(chunks: list[IndexedChunk]) -> str:
     return "\n\n".join(chunk_blocks)
 
 
+def _format_uploaded_documents(documents: list[IndexedDocument]) -> str:
+    if len(documents) == 0:
+        return "[none]"
+    return "\n".join(
+        [
+            f"{index + 1}. {document.filename} (doc_id={document.doc_id}, "
+            f"chunks={document.chunks_indexed})"
+            for index, document in enumerate(documents)
+        ]
+    )
+
+
 def _chunk_to_citation(chunk: IndexedChunk) -> dict[str, str | float | int | None]:
     citation = asdict(chunk)
     return {
@@ -167,4 +213,32 @@ def _chunk_to_citation(chunk: IndexedChunk) -> dict[str, str | float | int | Non
         "chunk_id": str(citation["chunk_id"]),
         "score": float(citation["score"]),
         "page": citation["page"],
+        "text": str(citation["text"]),
     }
+
+
+def _is_document_inventory_question(question: str) -> bool:
+    normalized_question = question.lower()
+    inventory_terms = [
+        "what documents",
+        "which documents",
+        "list documents",
+        "uploaded documents",
+        "uploaded files",
+        "files you have access",
+        "documents you have access",
+        "what files",
+    ]
+    return any(term in normalized_question for term in inventory_terms)
+
+
+def _build_document_inventory_answer(documents: list[IndexedDocument]) -> str:
+    if len(documents) == 0:
+        return "I currently have no uploaded documents indexed."
+    lines = ["I currently have access to these uploaded documents:"]
+    for index, document in enumerate(documents):
+        lines.append(
+            f"{index + 1}. {document.filename} (doc_id: {document.doc_id}, "
+            f"chunks: {document.chunks_indexed})"
+        )
+    return "\n".join(lines)

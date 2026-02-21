@@ -49,6 +49,7 @@ class StatefulFakeChatService:
                     "chunk_id": "0",
                     "score": 0.9,
                     "page": None,
+                    "text": "The document says hello world.",
                 }
             ],
             grounded=True,
@@ -56,14 +57,29 @@ class StatefulFakeChatService:
         )
 
 
+class StatefulFakeDocumentService:
+    def __init__(self, ingest_service: StatefulFakeIngestService) -> None:
+        self._ingest_service = ingest_service
+
+    def list_documents(self):
+        if not self._ingest_service.has_upload:
+            return []
+        return [{"doc_id": "doc-123", "filename": "a.txt", "chunks_indexed": 2}]
+
+    def delete_document(self, doc_id: str):
+        raise AssertionError("Delete should not be called in flow test")
+
+
 def test_upload_then_chat_returns_grounded_answer(
     required_env: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     ingest_service = StatefulFakeIngestService()
     chat_service = StatefulFakeChatService(ingest_service)
+    document_service = StatefulFakeDocumentService(ingest_service)
     fake_services = AppServices(
         ingest_service=ingest_service,
         chat_service=chat_service,
+        document_service=document_service,
     )
     monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
     client = TestClient(create_app())

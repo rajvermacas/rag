@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from app.config import Settings, load_environment_from_dotenv
 from app.logging_config import configure_logging
 from app.services.chat import ChatService, ConversationTurn
+from app.services.documents import DocumentService
 from app.services.ingest import IngestService
 from app.services.openrouter_client import OpenRouterClient
 from app.services.parsers import (
@@ -45,10 +46,26 @@ class ChatResponse(BaseModel):
     retrieved_count: int
 
 
+class DocumentSummaryResponse(BaseModel):
+    doc_id: str
+    filename: str
+    chunks_indexed: int
+
+
+class DocumentListResponse(BaseModel):
+    documents: list[DocumentSummaryResponse]
+
+
+class DeleteDocumentResponse(BaseModel):
+    doc_id: str
+    chunks_deleted: int
+
+
 @dataclass(frozen=True)
 class AppServices:
     ingest_service: IngestService
     chat_service: ChatService
+    document_service: DocumentService
 
 
 def create_app() -> FastAPI:
@@ -86,18 +103,24 @@ def _build_services(settings: Settings) -> AppServices:
         chunk_size=settings.chunk_size,
         chunk_overlap=settings.chunk_overlap,
     )
+    document_service = DocumentService(vector_store=vector_store)
     chat_service = ChatService(
         retrieval_service=retrieval_service,
         chat_client=openrouter_client,
+        document_service=document_service,
     )
-    return AppServices(ingest_service=ingest_service, chat_service=chat_service)
+    return AppServices(
+        ingest_service=ingest_service,
+        chat_service=chat_service,
+        document_service=document_service,
+    )
 
 
 def _register_routes(app: FastAPI, services: AppServices, settings: Settings) -> None:
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request) -> HTMLResponse:
         logger.info("index_page_requested")
-        return templates.TemplateResponse("index.html", {"request": request})
+        return templates.TemplateResponse(request=request, name="index.html")
 
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -121,6 +144,33 @@ def _register_routes(app: FastAPI, services: AppServices, settings: Settings) ->
         ) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"doc_id": result.doc_id, "chunks_indexed": result.chunks_indexed}
+
+    @app.get("/documents")
+    async def list_documents() -> DocumentListResponse:
+        logger.info("list_documents_endpoint_called")
+        documents = services.document_service.list_documents()
+        return DocumentListResponse(
+            documents=[
+                DocumentSummaryResponse(
+                    doc_id=document.doc_id,
+                    filename=document.filename,
+                    chunks_indexed=document.chunks_indexed,
+                )
+                for document in documents
+            ]
+        )
+
+    @app.delete("/documents/{doc_id}")
+    async def delete_document(doc_id: str) -> DeleteDocumentResponse:
+        logger.info("delete_document_endpoint_called doc_id=%s", doc_id)
+        try:
+            chunks_deleted = services.document_service.delete_document(doc_id)
+        except ValueError as exc:
+            error_message = str(exc)
+            if "not found" in error_message:
+                raise HTTPException(status_code=404, detail=error_message) from exc
+            raise HTTPException(status_code=400, detail=error_message) from exc
+        return DeleteDocumentResponse(doc_id=doc_id, chunks_deleted=chunks_deleted)
 
     @app.post("/chat")
     async def chat(payload: ChatRequest) -> ChatResponse:

@@ -25,12 +25,21 @@ class FakeChatService:
         )
 
 
+class FakeDocumentService:
+    def list_documents(self):
+        return [{"doc_id": "doc-123", "filename": "a.txt", "chunks_indexed": 3}]
+
+    def delete_document(self, doc_id: str):
+        raise AssertionError("Document service should not be called in index test")
+
+
 def test_index_page_has_upload_and_chat(
     required_env: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fake_services = AppServices(
         ingest_service=FakeIngestService(),
         chat_service=FakeChatService(),
+        document_service=FakeDocumentService(),
     )
     monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
     client = TestClient(create_app())
@@ -41,5 +50,9 @@ def test_index_page_has_upload_and_chat(
     assert response.status_code == 200
     assert 'id="upload-form"' in html
     assert 'id="chat-form"' in html
+    assert 'id="documents-panel"' in html
+    assert 'id="nav-chat"' in html
+    assert 'id="nav-documents"' in html
     assert "const conversationHistory = [];" in html
     assert "history: conversationHistory" in html
+    assert "renderMarkdown" in html

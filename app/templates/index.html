@@ -5,126 +5,501 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>RAG Document Chat</title>
   <link rel="stylesheet" href="/static/css/output.css" />
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.6/dist/purify.min.js"></script>
 </head>
-<body class="min-h-screen bg-slate-100 text-slate-900">
-  <main class="mx-auto max-w-4xl px-4 py-8">
-    <header class="mb-8">
-      <h1 class="text-3xl font-bold">RAG Document Chat</h1>
-      <p class="mt-2 text-sm text-slate-600">
-        Upload a PDF, DOCX, or TXT file to get document-cited answers plus general knowledge.
-      </p>
+<body class="min-h-screen bg-gradient-to-b from-zinc-100 to-white text-zinc-900">
+  <div class="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
+    <div class="absolute -left-24 -top-20 h-80 w-80 rounded-full bg-red-500/15 blur-3xl"></div>
+    <div class="absolute -right-24 bottom-0 h-96 w-96 rounded-full bg-red-600/10 blur-3xl"></div>
+  </div>
+
+  <main class="mx-auto max-w-6xl px-4 py-8 md:py-12">
+    <header class="mb-8 rounded-2xl border border-zinc-200 bg-white/90 p-6 shadow-xl shadow-zinc-300/40 backdrop-blur">
+      <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+        <div>
+          <p class="text-xs font-semibold uppercase tracking-[0.2em] text-red-600">RAG Workspace</p>
+          <h1 class="text-3xl font-black tracking-tight text-zinc-950 md:text-4xl">Document Intelligence Chat</h1>
+          <p class="mt-2 max-w-2xl text-sm text-zinc-600">
+            Upload files, chat with grounded answers, review citations, and manage indexed documents in one workspace.
+          </p>
+        </div>
+      </div>
     </header>
 
-    <section class="mb-6 rounded-xl bg-white p-5 shadow-sm">
-      <h2 class="mb-3 text-xl font-semibold">Upload Document</h2>
-      <form id="upload-form" class="flex flex-col gap-3">
-        <input
-          class="rounded-lg border border-slate-300 p-2"
-          type="file"
-          name="file"
-          accept=".pdf,.docx,.txt"
-          required
-        />
+    <section class="rounded-2xl border border-zinc-200 bg-white shadow-xl shadow-zinc-300/30">
+      <nav class="flex flex-wrap items-center gap-2 border-b border-zinc-200 p-4">
         <button
-          class="w-fit rounded-lg bg-slate-900 px-4 py-2 text-white"
-          type="submit"
+          id="nav-chat"
+          class="rounded-lg border border-zinc-300 bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-800"
+          type="button"
         >
-          Upload
+          Chat
         </button>
-      </form>
-      <p id="upload-status" class="mt-3 text-sm text-slate-700"></p>
-    </section>
+        <button
+          id="nav-documents"
+          class="rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-red-500 hover:text-red-600"
+          type="button"
+        >
+          Documents
+        </button>
+        <p class="ml-auto text-xs text-zinc-500">Palette: Red, Gray, Black, White</p>
+      </nav>
 
-    <section class="rounded-xl bg-white p-5 shadow-sm">
-      <h2 class="mb-3 text-xl font-semibold">Chat</h2>
-      <div
-        id="chat-window"
-        class="mb-4 h-80 overflow-y-auto rounded-lg border border-slate-200 p-3"
-      ></div>
-      <form id="chat-form" class="flex gap-2">
-        <input
-          class="flex-1 rounded-lg border border-slate-300 p-2"
-          type="text"
-          name="message"
-          placeholder="Ask a question about your documents..."
-          required
-        />
-        <button class="rounded-lg bg-slate-900 px-4 py-2 text-white" type="submit">
-          Send
-        </button>
-      </form>
+      <section id="chat-panel" class="grid gap-6 p-4 md:grid-cols-[minmax(20rem,24rem)_1fr] md:p-6">
+        <article class="rounded-xl border border-zinc-200 bg-zinc-50 p-4">
+          <h2 class="text-lg font-bold text-zinc-950">Upload Document</h2>
+          <p class="mt-1 text-sm text-zinc-600">Accepted formats: PDF, DOCX, TXT.</p>
+          <form id="upload-form" class="mt-4 space-y-3">
+            <input
+              class="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 file:mr-3 file:rounded-md file:border-0 file:bg-red-600 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-red-700"
+              type="file"
+              name="file"
+              accept=".pdf,.docx,.txt"
+              required
+            />
+            <button
+              id="upload-button"
+              class="inline-flex w-full items-center justify-center rounded-lg border border-red-700 bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+              type="submit"
+            >
+              Upload and Index
+            </button>
+          </form>
+          <p id="upload-status" class="mt-3 text-sm text-zinc-700"></p>
+        </article>
+
+        <article class="rounded-xl border border-zinc-200 bg-white p-4">
+          <h2 class="text-lg font-bold text-zinc-950">Chat</h2>
+          <div
+            id="chat-window"
+            class="mt-3 h-[30rem] overflow-y-auto rounded-xl border border-zinc-200 bg-zinc-50 p-3"
+          ></div>
+          <form id="chat-form" class="mt-4 flex flex-col gap-3 sm:flex-row">
+            <input
+              class="flex-1 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-red-500 focus:ring-2 focus:ring-red-500/20"
+              type="text"
+              name="message"
+              placeholder="Ask a question about uploaded documents..."
+              required
+            />
+            <button
+              id="chat-button"
+              class="inline-flex items-center justify-center rounded-lg border border-zinc-900 bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
+              type="submit"
+            >
+              Send
+            </button>
+          </form>
+        </article>
+      </section>
+
+      <section id="documents-panel" class="hidden space-y-4 p-4 md:p-6">
+        <div class="flex items-center justify-between">
+          <div>
+            <h2 class="text-lg font-bold text-zinc-950">Indexed Documents</h2>
+            <p class="text-sm text-zinc-600">Delete a document to remove its indexed chunks from retrieval.</p>
+          </div>
+          <button
+            id="refresh-documents"
+            class="rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-red-500 hover:text-red-600"
+            type="button"
+          >
+            Refresh
+          </button>
+        </div>
+        <div class="overflow-hidden rounded-xl border border-zinc-200">
+          <table class="w-full border-collapse bg-white text-sm">
+            <thead class="bg-zinc-100 text-left text-xs uppercase tracking-wide text-zinc-600">
+              <tr>
+                <th class="px-4 py-3">Filename</th>
+                <th class="px-4 py-3">Document ID</th>
+                <th class="px-4 py-3">Chunks</th>
+                <th class="px-4 py-3 text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody id="documents-table-body" class="divide-y divide-zinc-200"></tbody>
+          </table>
+        </div>
+        <p id="documents-status" class="text-sm text-zinc-700"></p>
+      </section>
     </section>
   </main>
 
+  <div id="citation-modal" class="fixed inset-0 z-20 hidden items-center justify-center bg-black/50 p-4">
+    <div class="max-h-[85vh] w-full max-w-3xl overflow-y-auto rounded-xl border border-zinc-300 bg-white p-5 shadow-2xl">
+      <div class="flex items-center justify-between">
+        <h3 id="citation-title" class="text-lg font-bold text-zinc-950"></h3>
+        <button
+          id="close-citation"
+          class="rounded-lg border border-zinc-300 bg-white px-3 py-1 text-sm font-semibold text-zinc-700 transition hover:border-red-500 hover:text-red-600"
+          type="button"
+        >
+          Close
+        </button>
+      </div>
+      <p id="citation-meta" class="mt-2 text-sm text-zinc-600"></p>
+      <pre id="citation-text" class="mt-4 whitespace-pre-wrap rounded-lg border border-zinc-200 bg-zinc-50 p-4 text-sm text-zinc-800"></pre>
+    </div>
+  </div>
+
   <script>
-    const uploadForm = document.getElementById("upload-form");
-    const uploadStatus = document.getElementById("upload-status");
-    const chatForm = document.getElementById("chat-form");
-    const chatWindow = document.getElementById("chat-window");
+    if (typeof marked === "undefined") {
+      throw new Error("marked is required for markdown rendering");
+    }
+    if (typeof DOMPurify === "undefined") {
+      throw new Error("DOMPurify is required for markdown rendering");
+    }
+
+    const uploadForm = requireElement("upload-form");
+    const uploadButton = requireElement("upload-button");
+    const uploadStatus = requireElement("upload-status");
+    const chatForm = requireElement("chat-form");
+    const chatButton = requireElement("chat-button");
+    const chatWindow = requireElement("chat-window");
+    const navChat = requireElement("nav-chat");
+    const navDocuments = requireElement("nav-documents");
+    const chatPanel = requireElement("chat-panel");
+    const documentsPanel = requireElement("documents-panel");
+    const refreshDocuments = requireElement("refresh-documents");
+    const documentsTableBody = requireElement("documents-table-body");
+    const documentsStatus = requireElement("documents-status");
+    const citationModal = requireElement("citation-modal");
+    const citationTitle = requireElement("citation-title");
+    const citationMeta = requireElement("citation-meta");
+    const citationText = requireElement("citation-text");
+    const closeCitation = requireElement("close-citation");
+
     const conversationHistory = [];
+
+    marked.setOptions({
+      breaks: true,
+      gfm: true,
+    });
+
+    navChat.addEventListener("click", () => switchPanel("chat"));
+    navDocuments.addEventListener("click", () => switchPanel("documents"));
+    refreshDocuments.addEventListener("click", async () => {
+      await loadDocuments();
+    });
+    closeCitation.addEventListener("click", closeCitationModal);
+    citationModal.addEventListener("click", (event) => {
+      if (event.target === citationModal) {
+        closeCitationModal();
+      }
+    });
 
     uploadForm.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const formData = new FormData(uploadForm);
-      const response = await fetch("/upload", {
-        method: "POST",
-        body: formData,
-      });
-      const payload = await response.json();
-      if (!response.ok) {
-        uploadStatus.textContent = `Upload failed: ${payload.detail}`;
-        return;
+      uploadButton.disabled = true;
+      uploadStatus.textContent = "Uploading and indexing document...";
+      try {
+        const formData = new FormData(uploadForm);
+        const response = await fetch("/upload", {
+          method: "POST",
+          body: formData,
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          uploadStatus.textContent = `Upload failed: ${requireString(payload, "detail", "upload error")}`;
+          return;
+        }
+        uploadStatus.textContent = `Indexed ${requireNumber(payload, "chunks_indexed", "upload response")} chunks for ${requireString(payload, "doc_id", "upload response")}.`;
+        uploadForm.reset();
+        await loadDocuments();
+      } finally {
+        uploadButton.disabled = false;
       }
-      uploadStatus.textContent = `Indexed ${payload.chunks_indexed} chunks (doc_id: ${payload.doc_id}).`;
     });
 
     chatForm.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const formData = new FormData(chatForm);
-      const rawMessage = formData.get("message");
-      if (rawMessage === null) {
-        throw new Error("message field is required");
+      chatButton.disabled = true;
+      try {
+        const formData = new FormData(chatForm);
+        const rawMessage = formData.get("message");
+        if (typeof rawMessage !== "string") {
+          throw new Error("message field is required");
+        }
+        const message = rawMessage.trim();
+        if (message === "") {
+          return;
+        }
+
+        appendUserMessage(message);
+        chatForm.reset();
+
+        const response = await fetch("/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message, history: conversationHistory }),
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          appendSystemError(requireString(payload, "detail", "chat error"));
+          return;
+        }
+
+        const answer = requireString(payload, "answer", "chat response");
+        const citations = requireCitations(payload);
+        appendAssistantMessage(answer, citations);
+        conversationHistory.push({ role: "user", message });
+        conversationHistory.push({ role: "assistant", message: answer });
+      } finally {
+        chatButton.disabled = false;
       }
-      const message = String(rawMessage).trim();
-      if (message === "") {
+    });
+
+    window.addEventListener("load", async () => {
+      appendAssistantMessage(
+        "Hello. I can answer questions from uploaded files, and you can check the **Documents** tab to manage indexing.",
+        []
+      );
+      await loadDocuments();
+    });
+
+    function requireElement(id) {
+      const element = document.getElementById(id);
+      if (element === null) {
+        throw new Error(`missing required element: ${id}`);
+      }
+      return element;
+    }
+
+    function requireString(record, key, context) {
+      if (!(key in record)) {
+        throw new Error(`missing '${key}' in ${context}`);
+      }
+      const value = record[key];
+      if (typeof value !== "string") {
+        throw new Error(`'${key}' must be a string in ${context}`);
+      }
+      return value;
+    }
+
+    function requireNumber(record, key, context) {
+      if (!(key in record)) {
+        throw new Error(`missing '${key}' in ${context}`);
+      }
+      const value = record[key];
+      if (typeof value !== "number") {
+        throw new Error(`'${key}' must be a number in ${context}`);
+      }
+      return value;
+    }
+
+    function requireCitations(payload) {
+      if (!("citations" in payload)) {
+        throw new Error("missing 'citations' in chat response");
+      }
+      if (!Array.isArray(payload.citations)) {
+        throw new Error("'citations' must be an array in chat response");
+      }
+      return payload.citations.map((citation, index) => {
+        const context = `citation[${index}]`;
+        const pageValue = citation.page;
+        if (pageValue !== null && typeof pageValue !== "number") {
+          throw new Error(`'page' must be null or number in ${context}`);
+        }
+        return {
+          doc_id: requireString(citation, "doc_id", context),
+          filename: requireString(citation, "filename", context),
+          chunk_id: requireString(citation, "chunk_id", context),
+          score: requireNumber(citation, "score", context),
+          page: pageValue,
+          text: requireString(citation, "text", context),
+        };
+      });
+    }
+
+    function switchPanel(target) {
+      if (target === "chat") {
+        chatPanel.classList.remove("hidden");
+        documentsPanel.classList.add("hidden");
+        navChat.classList.remove("bg-white", "text-zinc-700");
+        navChat.classList.add("bg-zinc-900", "text-white");
+        navDocuments.classList.remove("bg-zinc-900", "text-white");
+        navDocuments.classList.add("bg-white", "text-zinc-700");
+        return;
+      }
+      if (target === "documents") {
+        documentsPanel.classList.remove("hidden");
+        chatPanel.classList.add("hidden");
+        navDocuments.classList.remove("bg-white", "text-zinc-700");
+        navDocuments.classList.add("bg-zinc-900", "text-white");
+        navChat.classList.remove("bg-zinc-900", "text-white");
+        navChat.classList.add("bg-white", "text-zinc-700");
+        return;
+      }
+      throw new Error(`unknown panel target: ${target}`);
+    }
+
+    function renderMarkdown(markdownText) {
+      const html = marked.parse(markdownText);
+      return DOMPurify.sanitize(html);
+    }
+
+    function appendUserMessage(message) {
+      const wrapper = document.createElement("article");
+      wrapper.className = "mb-3 rounded-xl border border-zinc-300 bg-zinc-200/90 p-3";
+      wrapper.innerHTML = `<p class="text-xs font-semibold uppercase tracking-wide text-zinc-600">You</p><p class="mt-1 text-sm text-zinc-900">${escapeHtml(message)}</p>`;
+      chatWindow.append(wrapper);
+      scrollChatToBottom();
+    }
+
+    function appendAssistantMessage(markdownAnswer, citations) {
+      const wrapper = document.createElement("article");
+      wrapper.className = "mb-3 rounded-xl border border-red-200 bg-white p-3 shadow-sm";
+      const markdownHtml = renderMarkdown(markdownAnswer);
+      wrapper.innerHTML = `<p class="text-xs font-semibold uppercase tracking-wide text-red-600">Assistant</p><div class="markdown-body mt-2 text-sm text-zinc-800">${markdownHtml}</div>`;
+      wrapper.append(buildCitationSection(citations));
+      chatWindow.append(wrapper);
+      scrollChatToBottom();
+    }
+
+    function appendSystemError(errorText) {
+      const wrapper = document.createElement("article");
+      wrapper.className = "mb-3 rounded-xl border border-red-300 bg-red-50 p-3";
+      wrapper.innerHTML = `<p class="text-xs font-semibold uppercase tracking-wide text-red-600">Error</p><p class="mt-1 text-sm text-red-700">${escapeHtml(errorText)}</p>`;
+      chatWindow.append(wrapper);
+      scrollChatToBottom();
+    }
+
+    function buildCitationSection(citations) {
+      const section = document.createElement("div");
+      section.className = "mt-3 border-t border-zinc-200 pt-3";
+      const title = document.createElement("p");
+      title.className = "text-xs font-semibold uppercase tracking-wide text-zinc-500";
+      title.textContent = "Citations";
+      section.append(title);
+
+      if (citations.length === 0) {
+        const emptyText = document.createElement("p");
+        emptyText.className = "mt-1 text-xs text-zinc-500";
+        emptyText.textContent = "No document citations were used in this answer.";
+        section.append(emptyText);
+        return section;
+      }
+
+      const buttonRow = document.createElement("div");
+      buttonRow.className = "mt-2 flex flex-wrap gap-2";
+      citations.forEach((citation) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "rounded-md border border-zinc-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-zinc-700 transition hover:border-red-500 hover:text-red-600";
+        button.textContent = `${citation.filename} · chunk ${citation.chunk_id} · ${(citation.score * 100).toFixed(1)}%`;
+        button.addEventListener("click", () => showCitation(citation));
+        buttonRow.append(button);
+      });
+      section.append(buttonRow);
+      return section;
+    }
+
+    function showCitation(citation) {
+      citationTitle.textContent = `${citation.filename} · chunk ${citation.chunk_id}`;
+      const pageText = citation.page === null ? "n/a" : citation.page.toString();
+      citationMeta.textContent = `Document ID: ${citation.doc_id} | Relevance: ${(citation.score * 100).toFixed(2)}% | Page: ${pageText}`;
+      citationText.textContent = citation.text;
+      citationModal.classList.remove("hidden");
+      citationModal.classList.add("flex");
+    }
+
+    function closeCitationModal() {
+      citationModal.classList.add("hidden");
+      citationModal.classList.remove("flex");
+      citationTitle.textContent = "";
+      citationMeta.textContent = "";
+      citationText.textContent = "";
+    }
+
+    async function loadDocuments() {
+      documentsStatus.textContent = "Refreshing indexed documents...";
+      const response = await fetch("/documents");
+      const payload = await response.json();
+      if (!response.ok) {
+        documentsStatus.textContent = `Failed to load documents: ${requireString(payload, "detail", "document list error")}`;
+        return;
+      }
+      if (!("documents" in payload) || !Array.isArray(payload.documents)) {
+        throw new Error("missing 'documents' array in document list response");
+      }
+      renderDocuments(payload.documents);
+    }
+
+    function renderDocuments(documents) {
+      documentsTableBody.innerHTML = "";
+      if (documents.length === 0) {
+        const row = document.createElement("tr");
+        row.innerHTML = "<td class=\"px-4 py-6 text-sm text-zinc-500\" colspan=\"4\">No indexed documents yet.</td>";
+        documentsTableBody.append(row);
+        documentsStatus.textContent = "0 indexed documents.";
         return;
       }
 
-      chatWindow.insertAdjacentHTML(
-        "beforeend",
-        `<div class="mb-3 rounded-lg bg-slate-200 p-2"><strong>You:</strong> ${message}</div>`
-      );
-      chatForm.reset();
+      documents.forEach((documentRecord, index) => {
+        const context = `document[${index}]`;
+        const filename = requireString(documentRecord, "filename", context);
+        const docId = requireString(documentRecord, "doc_id", context);
+        const chunksIndexed = requireNumber(documentRecord, "chunks_indexed", context);
+        const row = document.createElement("tr");
+        row.className = "transition hover:bg-zinc-50";
+        row.innerHTML = `
+          <td class="px-4 py-3 font-medium text-zinc-900">${escapeHtml(filename)}</td>
+          <td class="px-4 py-3 font-mono text-xs text-zinc-600">${escapeHtml(docId)}</td>
+          <td class="px-4 py-3 text-zinc-700">${chunksIndexed.toString()}</td>
+          <td class="px-4 py-3 text-right">
+            <button
+              class="delete-document rounded-md border border-red-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-red-700 transition hover:bg-red-50"
+              type="button"
+              data-doc-id="${escapeHtml(docId)}"
+            >
+              Delete
+            </button>
+          </td>
+        `;
+        const deleteButton = row.querySelector(".delete-document");
+        if (deleteButton === null) {
+          throw new Error("missing delete button in document row");
+        }
+        deleteButton.addEventListener("click", async () => {
+          await deleteDocument(docId, filename);
+        });
+        documentsTableBody.append(row);
+      });
+      documentsStatus.textContent = `${documents.length} indexed document(s).`;
+    }
 
-      const response = await fetch("/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message, history: conversationHistory }),
+    async function deleteDocument(docId, filename) {
+      const shouldDelete = window.confirm(`Delete '${filename}' and remove its indexed chunks?`);
+      if (!shouldDelete) {
+        return;
+      }
+      documentsStatus.textContent = `Deleting ${filename}...`;
+      const response = await fetch(`/documents/${encodeURIComponent(docId)}`, {
+        method: "DELETE",
       });
       const payload = await response.json();
       if (!response.ok) {
-        chatWindow.insertAdjacentHTML(
-          "beforeend",
-          `<div class="mb-3 rounded-lg bg-red-100 p-2"><strong>Error:</strong> ${payload.detail}</div>`
-        );
-        chatWindow.scrollTop = chatWindow.scrollHeight;
+        documentsStatus.textContent = `Delete failed: ${requireString(payload, "detail", "delete document error")}`;
         return;
       }
+      const chunksDeleted = requireNumber(payload, "chunks_deleted", "delete document response");
+      documentsStatus.textContent = `Deleted ${filename}. Removed ${chunksDeleted} chunk(s) from index.`;
+      await loadDocuments();
+    }
 
-      const citations = payload.citations
-        .map((citation) => `${citation.filename}#${citation.chunk_id}`)
-        .join(", ");
-      const citationText = payload.citations.length === 0 ? "none" : citations;
-      chatWindow.insertAdjacentHTML(
-        "beforeend",
-        `<div class="mb-3 rounded-lg bg-emerald-100 p-2"><strong>Assistant:</strong> ${payload.answer}<div class="mt-2 text-xs">Citations: ${citationText}</div></div>`
-      );
-      conversationHistory.push({ role: "user", message });
-      conversationHistory.push({ role: "assistant", message: payload.answer });
+    function escapeHtml(value) {
+      return value
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll("\"", "&quot;")
+        .replaceAll("'", "&#39;");
+    }
+
+    function scrollChatToBottom() {
       chatWindow.scrollTop = chatWindow.scrollHeight;
-    });
+    }
   </script>
 </body>
 </html>

@@ -28,3 +28,13 @@ npm run build:css
 > tailwindcss -i ./app/static/css/input.css -o ./app/static/css/output.css --minify
 
 sh: 1: tailwindcss: not found
+--------------------------
+
+There are couple of things which needs to be fixed/implemented:
+1. There should be a clear chat option along with chat history to choose from a drop down.
+2. There should be no gradient style on the UI.
+3. Do not show citations on the UI
+4. User message should be at the right side of the chat bot and chatbot response should be on the left side.
+5. Add a loader in the Upload and index button
+6. Change the Upload and index button name to just Upload
+7. After a document is indexed just show after the loader that upload successful

@@ -39,11 +39,20 @@ class FakeChatService:
                     "chunk_id": "0",
                     "score": 0.92,
                     "page": None,
+                    "text": "The document says revenue is 20.",
                 }
             ],
             grounded=True,
             retrieved_count=1,
         )
+
+
+class FakeDocumentService:
+    def list_documents(self):
+        return [{"doc_id": "doc-1", "filename": "a.txt", "chunks_indexed": 1}]
+
+    def delete_document(self, doc_id: str):
+        raise AssertionError("Document service should not be called in chat test")
 
 
 def test_chat_returns_unknown_when_no_evidence(
@@ -52,6 +61,7 @@ def test_chat_returns_unknown_when_no_evidence(
     fake_services = AppServices(
         ingest_service=FakeIngestService(),
         chat_service=FakeChatService(),
+        document_service=FakeDocumentService(),
     )
     monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
     client = TestClient(create_app())
@@ -74,6 +84,7 @@ def test_chat_returns_grounded_answer(required_env: None, monkeypatch: pytest.Mo
     fake_services = AppServices(
         ingest_service=FakeIngestService(),
         chat_service=FakeChatService(),
+        document_service=FakeDocumentService(),
     )
     monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
     client = TestClient(create_app())
@@ -90,12 +101,14 @@ def test_chat_returns_grounded_answer(required_env: None, monkeypatch: pytest.Mo
     assert response.json()["grounded"] is True
     assert response.json()["retrieved_count"] == 1
     assert response.json()["citations"][0]["filename"] == "a.txt"
+    assert response.json()["citations"][0]["text"] == "The document says revenue is 20."
 
 
 def test_chat_requires_history_field(required_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
     fake_services = AppServices(
         ingest_service=FakeIngestService(),
         chat_service=FakeChatService(),
+        document_service=FakeDocumentService(),
     )
     monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
     client = TestClient(create_app())
