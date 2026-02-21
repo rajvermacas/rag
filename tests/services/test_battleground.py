@@ -78,6 +78,30 @@ class FakeChatClientNoEvidence:
         yield f"{model}-ok"
 
 
+class FakeChatClientWithCancelledError:
+    async def stream_chat_response_with_model(
+        self, model: str, system_prompt: str, user_prompt: str
+    ):
+        if model == "model-a":
+            yield "A1"
+            return
+        raise asyncio.CancelledError("model-b cancelled")
+
+
+class _SideCrash(BaseException):
+    pass
+
+
+class FakeChatClientWithBaseException:
+    async def stream_chat_response_with_model(
+        self, model: str, system_prompt: str, user_prompt: str
+    ):
+        if model == "model-a":
+            yield "A1"
+            return
+        raise _SideCrash("model-b crashed")
+
+
 def _sample_chunks() -> list[IndexedChunk]:
     return [
         IndexedChunk(
@@ -194,3 +218,72 @@ def test_compare_stream_handles_no_evidence_retrieval_like_chat() -> None:
 
     chunk_events = [event for event in events if event.kind == "chunk"]
     assert {event.side for event in chunk_events} == {"A", "B"}
+
+
+def test_compare_stream_handles_cancelled_side_without_deadlock() -> None:
+    service = BattlegroundService(
+        retrieval_service=FakeRetrievalService(_sample_chunks()),
+        chat_client=FakeChatClientWithCancelledError(),
+        document_service=FakeDocumentService(),
+        allowed_models=("model-a", "model-b"),
+    )
+
+    async def collect() -> list:
+        stream = service.compare_stream(
+            question="What is revenue?",
+            history=[],
+            model_a="model-a",
+            model_b="model-b",
+        )
+        return [event async for event in stream]
+
+    events = asyncio.run(asyncio.wait_for(collect(), timeout=0.5))
+    error_events = [event for event in events if event.kind == "error"]
+    assert len(error_events) == 1
+    assert error_events[0].side == "B"
+    assert error_events[0].error == "model-b cancelled"
+
+
+def test_compare_stream_handles_base_exception_side_without_deadlock() -> None:
+    service = BattlegroundService(
+        retrieval_service=FakeRetrievalService(_sample_chunks()),
+        chat_client=FakeChatClientWithBaseException(),
+        document_service=FakeDocumentService(),
+        allowed_models=("model-a", "model-b"),
+    )
+
+    async def collect() -> list:
+        stream = service.compare_stream(
+            question="What is revenue?",
+            history=[],
+            model_a="model-a",
+            model_b="model-b",
+        )
+        return [event async for event in stream]
+
+    events = asyncio.run(asyncio.wait_for(collect(), timeout=0.5))
+    error_events = [event for event in events if event.kind == "error"]
+    assert len(error_events) == 1
+    assert error_events[0].side == "B"
+    assert error_events[0].error == "model-b crashed"
+
+
+def test_compare_stream_normalizes_allowed_models_for_membership_checks() -> None:
+    service = BattlegroundService(
+        retrieval_service=FakeRetrievalService(_sample_chunks()),
+        chat_client=FakeChatClient(),
+        document_service=FakeDocumentService(),
+        allowed_models=(" model-a ", "model-b "),
+    )
+
+    async def collect() -> list:
+        stream = service.compare_stream(
+            question="What is revenue?",
+            history=[],
+            model_a="model-a",
+            model_b="model-b",
+        )
+        return [event async for event in stream]
+
+    events = asyncio.run(collect())
+    assert len(events) > 0

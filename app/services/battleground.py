@@ -16,6 +16,7 @@ from app.services.vector_store import IndexedChunk, IndexedDocument
 
 
 logger = logging.getLogger(__name__)
+_COMPARE_STREAM_QUEUE_MAXSIZE = 64
 
 
 class RetrievalService(Protocol):
@@ -53,11 +54,11 @@ class BattlegroundService:
         document_service: DocumentService,
         allowed_models: tuple[str, ...],
     ) -> None:
-        _validate_allowed_models(allowed_models)
+        normalized_allowed_models = _normalize_allowed_models(allowed_models)
         self._retrieval_service = retrieval_service
         self._chat_client = chat_client
         self._document_service = document_service
-        self._allowed_models = allowed_models
+        self._allowed_models = normalized_allowed_models
 
     async def compare_stream(
         self,
@@ -66,7 +67,9 @@ class BattlegroundService:
         model_a: str,
         model_b: str,
     ) -> AsyncIterator[CompareStreamEvent]:
-        _validate_compare_inputs(question, model_a, model_b, self._allowed_models)
+        normalized_model_a, normalized_model_b = _validate_compare_inputs(
+            question, model_a, model_b, self._allowed_models
+        )
         _validate_history(history)
         documents = self._document_service.list_documents()
         logger.info(
@@ -74,21 +77,27 @@ class BattlegroundService:
             "model_b=%s available_documents=%s",
             len(question),
             len(history),
-            model_a,
-            model_b,
+            normalized_model_a,
+            normalized_model_b,
             len(documents),
         )
         retrieval_query = _build_retrieval_query(question, history)
         chunks = await self._retrieve_chunks_or_empty(retrieval_query)
         system_prompt = _build_system_prompt(len(chunks) > 0)
         user_prompt = _build_user_prompt(question, history, chunks, documents)
-        queue: asyncio.Queue[CompareStreamEvent] = asyncio.Queue()
+        queue: asyncio.Queue[CompareStreamEvent] = asyncio.Queue(
+            maxsize=_COMPARE_STREAM_QUEUE_MAXSIZE
+        )
         tasks = [
             asyncio.create_task(
-                self._stream_model_side("A", model_a, system_prompt, user_prompt, queue)
+                self._stream_model_side(
+                    "A", normalized_model_a, system_prompt, user_prompt, queue
+                )
             ),
             asyncio.create_task(
-                self._stream_model_side("B", model_b, system_prompt, user_prompt, queue)
+                self._stream_model_side(
+                    "B", normalized_model_b, system_prompt, user_prompt, queue
+                )
             ),
         ]
         terminal_events = 0
@@ -142,7 +151,10 @@ class BattlegroundService:
                 chunk_count,
             )
             await queue.put(CompareStreamEvent(side=side, kind="done", chunk=None, error=None))
-        except Exception as exc:
+        except BaseException as exc:
+            if _is_current_task_cancellation(exc):
+                logger.info("battleground_side_stream_cancelled side=%s model=%s", side, model)
+                raise
             logger.exception(
                 "battleground_side_stream_failed side=%s model=%s error=%s",
                 side,
@@ -168,26 +180,43 @@ def _validate_compare_inputs(
     model_a: str,
     model_b: str,
     allowed_models: tuple[str, ...],
-) -> None:
+) -> tuple[str, str]:
+    normalized_model_a = model_a.strip()
+    normalized_model_b = model_b.strip()
     if question.strip() == "":
         raise ValueError("question must not be empty")
-    if model_a.strip() == "":
+    if normalized_model_a == "":
         raise ValueError("model_a must not be empty")
-    if model_b.strip() == "":
+    if normalized_model_b == "":
         raise ValueError("model_b must not be empty")
-    if model_a == model_b:
+    if normalized_model_a == normalized_model_b:
         raise ValueError("model_a and model_b must be different")
-    if model_a not in allowed_models:
+    if normalized_model_a not in allowed_models:
         raise ValueError("model_a is not allowed")
-    if model_b not in allowed_models:
+    if normalized_model_b not in allowed_models:
         raise ValueError("model_b is not allowed")
+    return normalized_model_a, normalized_model_b
+
+
+def _normalize_allowed_models(allowed_models: tuple[str, ...]) -> tuple[str, ...]:
+    normalized = tuple(model.strip() for model in allowed_models)
+    _validate_allowed_models(normalized)
+    return normalized
 
 
 def _validate_allowed_models(allowed_models: tuple[str, ...]) -> None:
     if len(allowed_models) == 0:
         raise ValueError("allowed_models must not be empty")
-    normalized = [model.strip() for model in allowed_models]
-    if any(model == "" for model in normalized):
+    if any(model == "" for model in allowed_models):
         raise ValueError("allowed_models contains empty model id")
-    if len(set(normalized)) != len(normalized):
+    if len(set(allowed_models)) != len(allowed_models):
         raise ValueError("allowed_models contains duplicate model id")
+
+
+def _is_current_task_cancellation(exc: BaseException) -> bool:
+    if not isinstance(exc, asyncio.CancelledError):
+        return False
+    task = asyncio.current_task()
+    if task is None:
+        return False
+    return task.cancelling() > 0
