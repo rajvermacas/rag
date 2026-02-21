@@ -54,10 +54,10 @@ def test_invalid_integer_env_raises(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_settings_from_env_success(required_env: None) -> None:
     settings = Settings.from_env()
     assert settings.openrouter_api_key == "test-key"
-    assert settings.openrouter_battleground_models == [
+    assert settings.openrouter_battleground_models == (
         "openai/gpt-4o-mini",
         "anthropic/claude-3.5-sonnet",
-    ]
+    )
     assert settings.chroma_collection_name == "rag_docs"
     assert settings.max_upload_mb == 25
     assert settings.chunk_size == 800
@@ -115,7 +115,15 @@ def test_battleground_models_trimmed_from_csv(
 
     settings = Settings.from_env()
 
-    assert settings.openrouter_battleground_models == [
+    assert settings.openrouter_battleground_models == (
         "openai/gpt-4o-mini",
         "anthropic/claude-3.5-sonnet",
-    ]
+    )
+
+
+def test_battleground_models_are_immutable(required_env: None) -> None:
+    settings = Settings.from_env()
+
+    assert isinstance(settings.openrouter_battleground_models, tuple)
+    with pytest.raises(AttributeError):
+        settings.openrouter_battleground_models.append("meta/llama-3.1-8b-instruct")

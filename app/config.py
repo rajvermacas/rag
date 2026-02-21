@@ -37,13 +37,13 @@ def _parse_float(name: str) -> float:
         ) from exc
 
 
-def _parse_required_csv(name: str) -> list[str]:
+def _parse_required_csv(name: str) -> tuple[str, ...]:
     raw_value = _require_env(name)
     values = [value.strip() for value in raw_value.split(",")]
     if any(value == "" for value in values):
         raise ValueError(f"{name} contains empty model id")
     logger.debug("parsed_required_csv name=%s value_count=%d", name, len(values))
-    return values
+    return tuple(values)
 
 
 def load_environment_from_dotenv(dotenv_path: str) -> bool:
@@ -61,7 +61,7 @@ class Settings:
     openrouter_api_key: str
     openrouter_chat_model: str
     openrouter_embed_model: str
-    openrouter_battleground_models: list[str]
+    openrouter_battleground_models: tuple[str, ...]
     chroma_persist_dir: str
     chroma_collection_name: str
     max_upload_mb: int
