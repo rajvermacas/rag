@@ -38,3 +38,13 @@ There are couple of things which needs to be fixed/implemented:
 5. Add a loader in the Upload and index button
 6. Change the Upload and index button name to just Upload
 7. After a document is indexed just show after the loader that upload successful
+----------------------------
+
+There are couple of things which needs to be fixed/implemented:
+1. When a question is asked to the chatbot, the response doesn't stream.
+2. Therre is no thinking... when the chatbot response is awaited making it difficult for the end user if the app is stuck or what?
+3. The Upload successful is a text which looks ugly. Design it properly
+4. Once the upload starts there is already a loader so no need to explictly write it down below in text Uploading document.
+5. Instead of having Clear Chat make it New Chat
+6. I see these texts [nitin.pdf#chunk_id=0, nitin.pdf#chunk_id=3] in the chatbot response. I don't need citations.
+7. 

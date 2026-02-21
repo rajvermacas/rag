@@ -53,6 +53,14 @@ def test_index_page_has_upload_and_chat(
     assert 'id="documents-panel"' in html
     assert 'id="nav-chat"' in html
     assert 'id="nav-documents"' in html
-    assert "const conversationHistory = [];" in html
+    assert 'id="chat-history-select"' in html
+    assert 'id="clear-chat"' in html
+    assert "let conversationHistory = [];" in html
     assert "history: conversationHistory" in html
     assert "renderMarkdown" in html
+    assert "Upload and Index" not in html
+    assert ">Upload<" in html
+    assert "bg-gradient-to-b" not in html
+    assert 'id="citation-modal"' not in html
+    assert "flex justify-end" in html
+    assert "flex justify-start" in html
