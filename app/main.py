@@ -1,8 +1,9 @@
 """FastAPI application entrypoint."""
 
 from dataclasses import dataclass
+import json
 import logging
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Protocol
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, StreamingResponse
@@ -12,6 +13,7 @@ from pydantic import BaseModel
 
 from app.config import Settings, load_environment_from_dotenv
 from app.logging_config import configure_logging
+from app.services.battleground import BattlegroundService, CompareStreamEvent
 from app.services.chat import ChatService, ConversationTurn
 from app.services.documents import DocumentService
 from app.services.ingest import IngestService
@@ -46,6 +48,17 @@ class ChatResponse(BaseModel):
     retrieved_count: int
 
 
+class BattlegroundCompareRequest(BaseModel):
+    message: str
+    history: list[ChatHistoryTurn]
+    model_a: str
+    model_b: str
+
+
+class BattlegroundModelsResponse(BaseModel):
+    models: list[str]
+
+
 class DocumentSummaryResponse(BaseModel):
     doc_id: str
     filename: str
@@ -59,6 +72,17 @@ class DocumentListResponse(BaseModel):
 class DeleteDocumentResponse(BaseModel):
     doc_id: str
     chunks_deleted: int
+
+
+class BattlegroundCompareService(Protocol):
+    def compare_stream(
+        self,
+        question: str,
+        history: list[ConversationTurn],
+        model_a: str,
+        model_b: str,
+    ) -> AsyncIterator[CompareStreamEvent]:
+        """Stream side-tagged compare events."""
 
 
 @dataclass(frozen=True)
@@ -116,17 +140,50 @@ def _build_services(settings: Settings) -> AppServices:
     )
 
 
+def _build_battleground_service(
+    services: AppServices,
+    settings: Settings,
+) -> BattlegroundCompareService:
+    try:
+        retrieval_service = services.chat_service._retrieval_service
+    except AttributeError as exc:
+        raise RuntimeError("chat service missing retrieval dependency for battleground") from exc
+    try:
+        chat_client = services.chat_service._chat_client
+    except AttributeError as exc:
+        raise RuntimeError("chat service missing chat client dependency for battleground") from exc
+    return BattlegroundService(
+        retrieval_service=retrieval_service,
+        chat_client=chat_client,
+        document_service=services.document_service,
+        allowed_models=settings.openrouter_battleground_models,
+    )
+
+
 def _register_routes(app: FastAPI, services: AppServices, settings: Settings) -> None:
+    _register_index_route(app)
+    _register_health_route(app, settings)
+    _register_upload_route(app, services)
+    _register_documents_routes(app, services)
+    _register_chat_routes(app, services)
+    _register_battleground_routes(app, services, settings)
+
+
+def _register_index_route(app: FastAPI) -> None:
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request) -> HTMLResponse:
         logger.info("index_page_requested")
         return templates.TemplateResponse(request=request, name="index.html")
 
+
+def _register_health_route(app: FastAPI, settings: Settings) -> None:
     @app.get("/health")
     async def health() -> dict[str, str]:
         logger.info("health_check_requested collection=%s", settings.chroma_collection_name)
         return {"status": "ok"}
 
+
+def _register_upload_route(app: FastAPI, services: AppServices) -> None:
     @app.post("/upload")
     async def upload(file: UploadFile = File(...)) -> dict[str, Any]:
         logger.info(
@@ -145,6 +202,8 @@ def _register_routes(app: FastAPI, services: AppServices, settings: Settings) ->
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"doc_id": result.doc_id, "chunks_indexed": result.chunks_indexed}
 
+
+def _register_documents_routes(app: FastAPI, services: AppServices) -> None:
     @app.get("/documents")
     async def list_documents() -> DocumentListResponse:
         logger.info("list_documents_endpoint_called")
@@ -172,6 +231,8 @@ def _register_routes(app: FastAPI, services: AppServices, settings: Settings) ->
             raise HTTPException(status_code=400, detail=error_message) from exc
         return DeleteDocumentResponse(doc_id=doc_id, chunks_deleted=chunks_deleted)
 
+
+def _register_chat_routes(app: FastAPI, services: AppServices) -> None:
     @app.post("/chat")
     async def chat(payload: ChatRequest) -> ChatResponse:
         logger.info(
@@ -179,9 +240,7 @@ def _register_routes(app: FastAPI, services: AppServices, settings: Settings) ->
             len(payload.message),
             len(payload.history),
         )
-        history = [
-            ConversationTurn(role=turn.role, message=turn.message) for turn in payload.history
-        ]
+        history = _to_conversation_history(payload.history)
         try:
             result = await services.chat_service.answer_question(payload.message, history)
         except ValueError as exc:
@@ -200,19 +259,60 @@ def _register_routes(app: FastAPI, services: AppServices, settings: Settings) ->
             len(payload.message),
             len(payload.history),
         )
-        history = [
-            ConversationTurn(role=turn.role, message=turn.message) for turn in payload.history
-        ]
+        history = _to_conversation_history(payload.history)
         try:
             stream = await _resolve_chat_stream(
                 services.chat_service.stream_answer_question(payload.message, history)
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return StreamingResponse(
-            _stream_chat_chunks(stream),
-            media_type="text/plain; charset=utf-8",
+        return StreamingResponse(_stream_chat_chunks(stream), media_type="text/plain; charset=utf-8")
+
+
+def _register_battleground_routes(
+    app: FastAPI,
+    services: AppServices,
+    settings: Settings,
+) -> None:
+    @app.get("/models/battleground")
+    async def list_battleground_models() -> BattlegroundModelsResponse:
+        logger.info(
+            "battleground_models_list_requested model_count=%s",
+            len(settings.openrouter_battleground_models),
         )
+        return BattlegroundModelsResponse(models=list(settings.openrouter_battleground_models))
+
+    @app.post("/battleground/compare/stream")
+    async def battleground_compare_stream(payload: BattlegroundCompareRequest) -> StreamingResponse:
+        logger.info(
+            "battleground_compare_stream_endpoint_called message_length=%s history_turns=%s "
+            "model_a=%s model_b=%s",
+            len(payload.message),
+            len(payload.history),
+            payload.model_a,
+            payload.model_b,
+        )
+        history = _to_conversation_history(payload.history)
+        battleground_service = _build_battleground_service(services, settings)
+        try:
+            stream = await _prime_battleground_stream(
+                battleground_service.compare_stream(
+                    question=payload.message,
+                    history=history,
+                    model_a=payload.model_a,
+                    model_b=payload.model_b,
+                )
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return StreamingResponse(
+            _stream_battleground_events(stream),
+            media_type="application/x-ndjson",
+        )
+
+
+def _to_conversation_history(history: list[ChatHistoryTurn]) -> list[ConversationTurn]:
+    return [ConversationTurn(role=turn.role, message=turn.message) for turn in history]
 
 
 async def _stream_chat_chunks(stream: AsyncIterator[str]) -> AsyncIterator[str]:
@@ -234,3 +334,51 @@ async def _resolve_chat_stream(stream_or_awaitable: Any) -> AsyncIterator[str]:
             raise ValueError("chat stream resolver expected an async iterator")
         return resolved_stream
     raise ValueError("chat stream resolver expected an awaitable or async iterator")
+
+
+async def _prime_battleground_stream(
+    stream: AsyncIterator[CompareStreamEvent],
+) -> AsyncIterator[CompareStreamEvent]:
+    try:
+        first_event = await anext(stream)
+    except StopAsyncIteration as exc:
+        raise RuntimeError("battleground stream produced no events") from exc
+    return _prepend_battleground_event(first_event, stream)
+
+
+async def _prepend_battleground_event(
+    first_event: CompareStreamEvent,
+    stream: AsyncIterator[CompareStreamEvent],
+) -> AsyncIterator[CompareStreamEvent]:
+    yield first_event
+    async for event in stream:
+        yield event
+
+
+async def _stream_battleground_events(
+    stream: AsyncIterator[CompareStreamEvent],
+) -> AsyncIterator[str]:
+    event_count = 0
+    async for event in stream:
+        event_count += 1
+        yield _serialize_battleground_event(event)
+    logger.info("battleground_compare_stream_completed event_count=%s", event_count)
+
+
+def _serialize_battleground_event(event: CompareStreamEvent) -> str:
+    if event.side.strip() == "":
+        raise ValueError("battleground event side must not be empty")
+    payload: dict[str, Any] = {"side": event.side}
+    if event.kind == "chunk":
+        if event.chunk is None or event.chunk == "":
+            raise ValueError("battleground chunk event must include chunk")
+        payload["chunk"] = event.chunk
+    elif event.kind == "done":
+        payload["done"] = True
+    elif event.kind == "error":
+        if event.error is None or event.error.strip() == "":
+            raise ValueError("battleground error event must include error")
+        payload["error"] = event.error
+    else:
+        raise ValueError(f"unsupported battleground event kind: {event.kind}")
+    return f"{json.dumps(payload)}\n"
