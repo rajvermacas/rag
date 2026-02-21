@@ -49,6 +49,27 @@ class FakeBattlegroundValidationErrorService:
         yield CompareStreamEvent(side="A", kind="done", chunk=None, error=None)
 
 
+class FakeBattlegroundDisallowedModelService:
+    async def compare_stream(self, question: str, history, model_a: str, model_b: str):
+        raise ValueError("model_a is not allowed")
+        yield CompareStreamEvent(side="A", kind="done", chunk=None, error=None)
+
+
+class FakeBattlegroundMustNotBeCalledService:
+    async def compare_stream(self, question: str, history, model_a: str, model_b: str):
+        raise AssertionError("Battleground service should not be called for invalid payload")
+        yield CompareStreamEvent(side="A", kind="done", chunk=None, error=None)
+
+
+def _valid_compare_payload() -> dict:
+    return {
+        "message": "What is revenue?",
+        "history": [{"role": "user", "message": "Earlier message"}],
+        "model_a": "openai/gpt-4o-mini",
+        "model_b": "anthropic/claude-3.5-sonnet",
+    }
+
+
 
 def _build_client(
     monkeypatch: pytest.MonkeyPatch,
@@ -118,13 +139,76 @@ def test_compare_stream_returns_400_for_service_validation_errors(
 
     response = client.post(
         "/battleground/compare/stream",
-        json={
-            "message": "What is revenue?",
-            "history": [{"role": "user", "message": "Earlier message"}],
-            "model_a": "openai/gpt-4o-mini",
-            "model_b": "openai/gpt-4o-mini",
-        },
+        json={**_valid_compare_payload(), "model_b": "openai/gpt-4o-mini"},
     )
 
     assert response.status_code == 400
     assert response.json() == {"detail": "model_a and model_b must be different"}
+
+
+def test_compare_stream_returns_400_for_empty_message(
+    required_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = _build_client(monkeypatch, FakeBattlegroundMustNotBeCalledService())
+
+    response = client.post(
+        "/battleground/compare/stream",
+        json={**_valid_compare_payload(), "message": " "},
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "invalid battleground compare payload: message must not be empty"}
+
+
+@pytest.mark.parametrize(
+    ("field_name", "detail_message"),
+    [
+        ("model_a", "model_a must not be empty"),
+        ("model_b", "model_b must not be empty"),
+    ],
+)
+def test_compare_stream_returns_400_for_empty_model_ids(
+    required_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+    field_name: str,
+    detail_message: str,
+) -> None:
+    client = _build_client(monkeypatch, FakeBattlegroundMustNotBeCalledService())
+
+    response = client.post(
+        "/battleground/compare/stream",
+        json={**_valid_compare_payload(), field_name: "   "},
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": f"invalid battleground compare payload: {detail_message}"}
+
+
+def test_compare_stream_returns_400_for_disallowed_models(
+    required_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = _build_client(monkeypatch, FakeBattlegroundDisallowedModelService())
+
+    response = client.post(
+        "/battleground/compare/stream",
+        json={**_valid_compare_payload(), "model_a": "meta/not-allowed"},
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "model_a is not allowed"}
+
+
+@pytest.mark.parametrize("missing_field", ["message", "history", "model_a", "model_b"])
+def test_compare_stream_returns_400_for_missing_required_fields(
+    required_env: None, monkeypatch: pytest.MonkeyPatch, missing_field: str
+) -> None:
+    client = _build_client(monkeypatch, FakeBattlegroundMustNotBeCalledService())
+    payload = _valid_compare_payload()
+    del payload[missing_field]
+
+    response = client.post("/battleground/compare/stream", json=payload)
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "detail": f"invalid battleground compare payload: {missing_field} is required"
+    }

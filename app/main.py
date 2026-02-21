@@ -6,10 +6,14 @@ import logging
 from typing import Any, AsyncIterator, Protocol
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.exception_handlers import (
+    request_validation_exception_handler as fastapi_request_validation_exception_handler,
+)
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from app.config import Settings, load_environment_from_dotenv
 from app.logging_config import configure_logging
@@ -53,6 +57,21 @@ class BattlegroundCompareRequest(BaseModel):
     history: list[ChatHistoryTurn]
     model_a: str
     model_b: str
+
+    @field_validator("message")
+    @classmethod
+    def validate_message(cls, value: str) -> str:
+        return _require_non_empty_payload_value(value, "message")
+
+    @field_validator("model_a")
+    @classmethod
+    def validate_model_a(cls, value: str) -> str:
+        return _require_non_empty_payload_value(value, "model_a")
+
+    @field_validator("model_b")
+    @classmethod
+    def validate_model_b(cls, value: str) -> str:
+        return _require_non_empty_payload_value(value, "model_b")
 
 
 class BattlegroundModelsResponse(BaseModel):
@@ -100,6 +119,7 @@ def create_app() -> FastAPI:
     services = _build_services(settings)
     application = FastAPI(title="RAG OpenRouter App")
     application.mount("/static", StaticFiles(directory="app/static"), name="static")
+    _register_request_validation_handlers(application)
     _register_routes(application, services, settings)
     return application
 
@@ -167,6 +187,61 @@ def _register_routes(app: FastAPI, services: AppServices, settings: Settings) ->
     _register_documents_routes(app, services)
     _register_chat_routes(app, services)
     _register_battleground_routes(app, services, settings)
+
+
+def _register_request_validation_handlers(app: FastAPI) -> None:
+    @app.exception_handler(RequestValidationError)
+    async def handle_request_validation_error(
+        request: Request,
+        exc: RequestValidationError,
+    ) -> JSONResponse:
+        if not _is_battleground_compare_stream_request(request):
+            return await fastapi_request_validation_exception_handler(request, exc)
+        detail = _build_battleground_validation_detail(exc.errors())
+        logger.info(
+            "battleground_compare_stream_payload_validation_failed detail=%s",
+            detail,
+        )
+        return JSONResponse(status_code=400, content={"detail": detail})
+
+
+def _is_battleground_compare_stream_request(request: Request) -> bool:
+    return request.method.upper() == "POST" and request.url.path == "/battleground/compare/stream"
+
+
+def _build_battleground_validation_detail(errors: list[dict[str, Any]]) -> str:
+    messages = [_build_battleground_validation_message(error) for error in errors]
+    return f"invalid battleground compare payload: {'; '.join(messages)}"
+
+
+def _build_battleground_validation_message(error: dict[str, Any]) -> str:
+    field_name = _extract_validation_field_name(error["loc"])
+    if error["type"] == "missing":
+        return f"{field_name} is required"
+    message = _strip_pydantic_value_error_prefix(str(error["msg"]))
+    if message.startswith(f"{field_name} "):
+        return message
+    return f"{field_name}: {message}"
+
+
+def _extract_validation_field_name(location: tuple[Any, ...]) -> str:
+    field_path = [str(part) for part in location if part != "body"]
+    if len(field_path) == 0:
+        raise ValueError("request validation location did not include a body field")
+    return ".".join(field_path)
+
+
+def _strip_pydantic_value_error_prefix(message: str) -> str:
+    prefix = "Value error, "
+    if message.startswith(prefix):
+        return message[len(prefix) :]
+    return message
+
+
+def _require_non_empty_payload_value(value: str, field_name: str) -> str:
+    if value.strip() == "":
+        raise ValueError(f"{field_name} must not be empty")
+    return value
 
 
 def _register_index_route(app: FastAPI) -> None:
