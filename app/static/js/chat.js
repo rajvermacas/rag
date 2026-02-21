@@ -7,6 +7,7 @@
 
   const { requireElement, requireString, requireNumber, requireErrorMessage, renderMarkdown, removeCitationArtifacts, escapeHtml } = window.RagCommon;
   const CHAT_STORAGE_KEY = "rag-chat-sessions";
+  const DEFAULT_CHAT_GREETING = "Hello! How can I assist you today?";
 
   const uploadForm = requireElement("upload-form");
   const uploadButton = requireElement("upload-button");
@@ -162,9 +163,7 @@
     const session = createChatSession("Current Chat");
     chatSessions.push(session);
     setActiveSession(session.id);
-    appendAssistantMessage(
-      "Hello. I can answer questions from uploaded files and show indexed files under the upload panel."
-    );
+    appendAssistantMessage(DEFAULT_CHAT_GREETING);
     renderChatHistoryOptions();
     renderActiveSessionMessages();
     persistChatState();
@@ -291,6 +290,7 @@
     const newSession = createChatSession("Current Chat");
     chatSessions.unshift(newSession);
     setActiveSession(newSession.id);
+    appendAssistantMessage(DEFAULT_CHAT_GREETING);
     renderChatHistoryOptions();
     renderActiveSessionMessages();
     persistChatState();

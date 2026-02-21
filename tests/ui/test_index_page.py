@@ -140,3 +140,27 @@ def test_common_script_removes_citation_artifacts_without_collapsing_newlines(
         "Line one    with   spaces\n[source #1]Line two\t\twith tabs",
     )
     assert cleaned == "Line one with spaces\nLine two with tabs"
+
+
+def test_chat_script_uses_updated_default_greeting_for_initial_and_new_chat(
+    required_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_services = AppServices(
+        ingest_service=FakeIngestService(),
+        chat_service=FakeChatService(),
+        document_service=FakeDocumentService(),
+        retrieval_service=object(),
+        chat_client=object(),
+    )
+    monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
+    client = TestClient(create_app())
+
+    response = client.get("/static/js/chat.js")
+    assert response.status_code == 200
+    script_source = response.text
+    assert 'const DEFAULT_CHAT_GREETING = "Hello! How can I assist you today?";' in script_source
+    assert script_source.count("appendAssistantMessage(DEFAULT_CHAT_GREETING);") == 2
+    assert (
+        "Hello. I can answer questions from uploaded files and show indexed files under the upload panel."
+        not in script_source
+    )
