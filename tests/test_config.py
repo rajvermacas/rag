@@ -1,6 +1,8 @@
+import os
+
 import pytest
 
-from app.config import Settings
+from app.config import Settings, load_environment_from_dotenv
 
 
 def test_missing_required_env_raises(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -50,3 +52,16 @@ def test_settings_from_env_success(required_env: None) -> None:
     assert settings.chunk_overlap == 120
     assert settings.min_relevance_score == 0.75
     assert settings.app_log_level == "INFO"
+
+
+def test_load_environment_from_dotenv_sets_environment(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dotenv_path = tmp_path / ".env"
+    dotenv_path.write_text("OPENROUTER_API_KEY=from-dotenv\n", encoding="utf-8")
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+    loaded = load_environment_from_dotenv(str(dotenv_path))
+
+    assert loaded is True
+    assert os.getenv("OPENROUTER_API_KEY") == "from-dotenv"

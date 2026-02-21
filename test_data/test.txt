@@ -1,0 +1,8 @@
+Brainstorm.
+I am trying to build a RAG pipeline.
+Openrouter should be used.
+
+A UI should be built using tailwind css, fastapi.
+There should be a file upload button which should read files like pdf, docx, text.
+
+And then there should be a chatbot which should help talk to the doc.

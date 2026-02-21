@@ -13,6 +13,7 @@ Single-user RAG pipeline built with FastAPI and Tailwind CSS.
 ## Required Environment Variables
 
 All variables are required. App startup fails if any are missing.
+The app loads values from `.env` automatically at startup via `python-dotenv`.
 
 ```bash
 OPENROUTER_API_KEY=...

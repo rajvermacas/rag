@@ -1,7 +1,13 @@
 """Configuration loading with strict required environment variables."""
 
 from dataclasses import dataclass
+import logging
 import os
+
+from dotenv import load_dotenv
+
+
+logger = logging.getLogger(__name__)
 
 
 def _require_env(name: str) -> str:
@@ -29,6 +35,14 @@ def _parse_float(name: str) -> float:
         raise ValueError(
             f"Invalid float for environment variable {name}: {raw_value}"
         ) from exc
+
+
+def load_environment_from_dotenv(dotenv_path: str) -> bool:
+    if dotenv_path.strip() == "":
+        raise ValueError("dotenv_path must not be empty")
+    loaded = load_dotenv(dotenv_path=dotenv_path, override=False)
+    logger.info("dotenv_load_attempted dotenv_path=%s loaded=%s", dotenv_path, loaded)
+    return loaded
 
 
 @dataclass(frozen=True)

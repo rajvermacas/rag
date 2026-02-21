@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
-from app.config import Settings
+from app.config import Settings, load_environment_from_dotenv
 from app.logging_config import configure_logging
 from app.services.chat import ChatService
 from app.services.ingest import IngestService
@@ -46,8 +46,10 @@ class AppServices:
 
 
 def create_app() -> FastAPI:
+    dotenv_loaded = load_environment_from_dotenv(".env")
     settings = Settings.from_env()
     configure_logging(settings.app_log_level)
+    logger.info("application_startup_dotenv_loaded loaded=%s", dotenv_loaded)
     services = _build_services(settings)
     application = FastAPI(title="RAG OpenRouter App")
     application.mount("/static", StaticFiles(directory="app/static"), name="static")
