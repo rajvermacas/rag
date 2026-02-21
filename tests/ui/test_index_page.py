@@ -43,6 +43,8 @@ def test_index_page_has_upload_and_chat(
         ingest_service=FakeIngestService(),
         chat_service=FakeChatService(),
         document_service=FakeDocumentService(),
+        retrieval_service=object(),
+        chat_client=object(),
     )
     monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
     client = TestClient(create_app())
@@ -76,6 +78,8 @@ def test_index_page_preserves_markdown_line_breaks(
         ingest_service=FakeIngestService(),
         chat_service=FakeChatService(),
         document_service=FakeDocumentService(),
+        retrieval_service=object(),
+        chat_client=object(),
     )
     monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
     client = TestClient(create_app())

@@ -79,6 +79,8 @@ def _build_client(
         ingest_service=FakeIngestService(),
         chat_service=FakeChatService(),
         document_service=FakeDocumentService(),
+        retrieval_service=object(),
+        chat_client=object(),
     )
     monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
     monkeypatch.setattr(
@@ -226,3 +228,27 @@ def test_compare_stream_returns_400_for_non_object_json_payloads(
     assert response.json() == {
         "detail": "invalid battleground compare payload: payload must be a JSON object"
     }
+
+
+def test_compare_stream_returns_clear_400_for_malformed_json(
+    required_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = _build_client(monkeypatch, FakeBattlegroundMustNotBeCalledService())
+
+    response = client.post(
+        "/battleground/compare/stream",
+        content='{"message":"bad-json"',
+        headers={"content-type": "application/json"},
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "detail": "invalid battleground compare payload: payload must be valid JSON"
+    }
+
+
+def test_serialize_battleground_event_rejects_non_string_side() -> None:
+    with pytest.raises(ValueError, match="battleground event side must be a string"):
+        main_module._serialize_battleground_event(
+            CompareStreamEvent(side=1, kind="done", chunk=None, error=None)  # type: ignore[arg-type]
+        )

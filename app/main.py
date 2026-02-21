@@ -109,6 +109,8 @@ class AppServices:
     ingest_service: IngestService
     chat_service: ChatService
     document_service: DocumentService
+    retrieval_service: RetrievalService
+    chat_client: OpenRouterClient
 
 
 def create_app() -> FastAPI:
@@ -157,6 +159,8 @@ def _build_services(settings: Settings) -> AppServices:
         ingest_service=ingest_service,
         chat_service=chat_service,
         document_service=document_service,
+        retrieval_service=retrieval_service,
+        chat_client=openrouter_client,
     )
 
 
@@ -164,17 +168,9 @@ def _build_battleground_service(
     services: AppServices,
     settings: Settings,
 ) -> BattlegroundCompareService:
-    try:
-        retrieval_service = services.chat_service._retrieval_service
-    except AttributeError as exc:
-        raise RuntimeError("chat service missing retrieval dependency for battleground") from exc
-    try:
-        chat_client = services.chat_service._chat_client
-    except AttributeError as exc:
-        raise RuntimeError("chat service missing chat client dependency for battleground") from exc
     return BattlegroundService(
-        retrieval_service=retrieval_service,
-        chat_client=chat_client,
+        retrieval_service=services.retrieval_service,
+        chat_client=services.chat_client,
         document_service=services.document_service,
         allowed_models=settings.openrouter_battleground_models,
     )
@@ -217,6 +213,8 @@ def _build_battleground_validation_detail(errors: list[dict[str, Any]]) -> str:
 def _build_battleground_validation_message(error: dict[str, Any]) -> str:
     if _is_non_object_body_payload_error(error):
         return "payload must be a JSON object"
+    if _is_malformed_json_payload_error(error):
+        return "payload must be valid JSON"
     field_name = _extract_validation_field_name(error["loc"])
     if error["type"] == "missing":
         return f"{field_name} is required"
@@ -232,6 +230,11 @@ def _is_non_object_body_payload_error(error: dict[str, Any]) -> bool:
         "dict_type",
         "model_attributes_type",
     }
+
+
+def _is_malformed_json_payload_error(error: dict[str, Any]) -> bool:
+    location = tuple(error["loc"])
+    return len(location) > 0 and location[0] == "body" and error["type"] == "json_invalid"
 
 
 def _extract_validation_field_name(location: tuple[Any, ...]) -> str:
@@ -451,9 +454,8 @@ async def _stream_battleground_events(
 
 
 def _serialize_battleground_event(event: CompareStreamEvent) -> str:
-    if event.side.strip() == "":
-        raise ValueError("battleground event side must not be empty")
-    payload: dict[str, Any] = {"side": event.side}
+    side = _validate_battleground_event_side(event.side)
+    payload: dict[str, Any] = {"side": side}
     if event.kind == "chunk":
         if event.chunk is None or event.chunk == "":
             raise ValueError("battleground chunk event must include chunk")
@@ -467,3 +469,11 @@ def _serialize_battleground_event(event: CompareStreamEvent) -> str:
     else:
         raise ValueError(f"unsupported battleground event kind: {event.kind}")
     return f"{json.dumps(payload)}\n"
+
+
+def _validate_battleground_event_side(side: Any) -> str:
+    if not isinstance(side, str):
+        raise ValueError("battleground event side must be a string")
+    if side.strip() == "":
+        raise ValueError("battleground event side must not be empty")
+    return side

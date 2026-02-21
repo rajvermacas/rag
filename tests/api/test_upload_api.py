@@ -36,6 +36,8 @@ def test_upload_txt_indexes_document(required_env: None, monkeypatch: pytest.Mon
         ingest_service=FakeIngestService(),
         chat_service=FakeChatService(),
         document_service=FakeDocumentService(),
+        retrieval_service=object(),
+        chat_client=object(),
     )
     monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
     client = TestClient(create_app())
@@ -55,6 +57,8 @@ def test_upload_returns_400_for_validation_error(
         ingest_service=FakeIngestService(),
         chat_service=FakeChatService(),
         document_service=FakeDocumentService(),
+        retrieval_service=object(),
+        chat_client=object(),
     )
     monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
     client = TestClient(create_app())

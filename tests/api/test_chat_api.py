@@ -62,6 +62,8 @@ def test_chat_returns_unknown_when_no_evidence(
         ingest_service=FakeIngestService(),
         chat_service=FakeChatService(),
         document_service=FakeDocumentService(),
+        retrieval_service=object(),
+        chat_client=object(),
     )
     monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
     client = TestClient(create_app())
@@ -85,6 +87,8 @@ def test_chat_returns_grounded_answer(required_env: None, monkeypatch: pytest.Mo
         ingest_service=FakeIngestService(),
         chat_service=FakeChatService(),
         document_service=FakeDocumentService(),
+        retrieval_service=object(),
+        chat_client=object(),
     )
     monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
     client = TestClient(create_app())
@@ -111,6 +115,8 @@ def test_chat_stream_returns_chunked_answer(
         ingest_service=FakeIngestService(),
         chat_service=FakeChatService(),
         document_service=FakeDocumentService(),
+        retrieval_service=object(),
+        chat_client=object(),
     )
     monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
     client = TestClient(create_app())
@@ -132,6 +138,8 @@ def test_chat_requires_history_field(required_env: None, monkeypatch: pytest.Mon
         ingest_service=FakeIngestService(),
         chat_service=FakeChatService(),
         document_service=FakeDocumentService(),
+        retrieval_service=object(),
+        chat_client=object(),
     )
     monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
     client = TestClient(create_app())
