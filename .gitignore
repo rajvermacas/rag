@@ -40,3 +40,6 @@ Thumbs.db
 
 # Chroma persistence
 chroma/
+
+# Local git worktrees
+.worktrees/
