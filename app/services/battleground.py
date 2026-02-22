@@ -5,42 +5,22 @@ from dataclasses import dataclass
 import logging
 from typing import AsyncIterator, Protocol
 
-from app.services.chat import (
-    ConversationTurn,
-    _build_retrieval_query,
-    _build_system_prompt,
-    _build_user_prompt,
-    _validate_history,
-)
-from app.services.vector_store import IndexedChunk, IndexedDocument
+from app.services.chat import ConversationTurn, _validate_history
 
 
 logger = logging.getLogger(__name__)
 _COMPARE_STREAM_QUEUE_MAXSIZE = 64
 
 
-class RetrievalService(Protocol):
-    async def retrieve(self, question: str) -> list[IndexedChunk]:
-        """Retrieve relevant chunks."""
-
-
-class ChatClient(Protocol):
-    async def stream_chat_response_with_backend(
+class QueryService(Protocol):
+    async def stream_answer_question(
         self,
+        question: str,
+        history: list[ConversationTurn],
         backend_id: str,
         model: str,
-        system_prompt: str,
-        user_prompt: str,
     ) -> AsyncIterator[str]:
-        """Stream a chat response with explicit backend and model selection."""
-
-    def get_provider_for_backend(self, backend_id: str) -> str:
-        """Resolve provider id for a backend id."""
-
-
-class DocumentService(Protocol):
-    def list_documents(self) -> list[IndexedDocument]:
-        """Return all indexed documents."""
+        """Stream a response for a backend/model pair."""
 
 
 @dataclass(frozen=True)
@@ -52,17 +32,10 @@ class CompareStreamEvent:
 
 
 class BattlegroundService:
-    """Run a fair compare stream for two models using shared retrieval and prompts."""
+    """Run side-by-side streaming comparisons through query-engine streaming."""
 
-    def __init__(
-        self,
-        retrieval_service: RetrievalService,
-        chat_client: ChatClient,
-        document_service: DocumentService,
-    ) -> None:
-        self._retrieval_service = retrieval_service
-        self._chat_client = chat_client
-        self._document_service = document_service
+    def __init__(self, query_service: QueryService) -> None:
+        self._query_service = query_service
 
     async def compare_stream(
         self,
@@ -81,54 +54,34 @@ class BattlegroundService:
             model_b=model_b,
         )
         _validate_history(history)
-        provider_a = self._chat_client.get_provider_for_backend(normalized_inputs[0])
-        provider_b = self._chat_client.get_provider_for_backend(normalized_inputs[2])
-        documents = self._document_service.list_documents()
         logger.info(
             "battleground_compare_started question_length=%s history_turns=%s "
-            "model_a_backend_id=%s model_a_provider=%s model_a=%s "
-            "model_b_backend_id=%s model_b_provider=%s model_b=%s "
-            "available_documents=%s",
+            "model_a_backend_id=%s model_a=%s model_b_backend_id=%s model_b=%s",
             len(question),
             len(history),
             normalized_inputs[0],
-            provider_a,
             normalized_inputs[1],
             normalized_inputs[2],
-            provider_b,
             normalized_inputs[3],
-            len(documents),
         )
-        retrieval_query = _build_retrieval_query(question, history)
-        chunks = await self._retrieve_chunks_or_empty(retrieval_query)
-        system_prompt = _build_system_prompt(len(chunks) > 0)
-        user_prompt = _build_user_prompt(question, history, chunks, documents)
         queue: asyncio.Queue[CompareStreamEvent] = asyncio.Queue(
             maxsize=_COMPARE_STREAM_QUEUE_MAXSIZE
         )
+        stream_a = self._query_service.stream_answer_question(
+            question=question,
+            history=history,
+            backend_id=normalized_inputs[0],
+            model=normalized_inputs[1],
+        )
+        stream_b = self._query_service.stream_answer_question(
+            question=question,
+            history=history,
+            backend_id=normalized_inputs[2],
+            model=normalized_inputs[3],
+        )
         tasks = [
-            asyncio.create_task(
-                self._stream_model_side(
-                    side="A",
-                    backend_id=normalized_inputs[0],
-                    provider=provider_a,
-                    model=normalized_inputs[1],
-                    system_prompt=system_prompt,
-                    user_prompt=user_prompt,
-                    queue=queue,
-                )
-            ),
-            asyncio.create_task(
-                self._stream_model_side(
-                    side="B",
-                    backend_id=normalized_inputs[2],
-                    provider=provider_b,
-                    model=normalized_inputs[3],
-                    system_prompt=system_prompt,
-                    user_prompt=user_prompt,
-                    queue=queue,
-                )
-            ),
+            asyncio.create_task(self._stream_side("A", stream_a, queue)),
+            asyncio.create_task(self._stream_side("B", stream_b, queue)),
         ]
         terminal_events = 0
         try:
@@ -140,77 +93,33 @@ class BattlegroundService:
         finally:
             await _cancel_pending_tasks(tasks)
 
-    async def _retrieve_chunks_or_empty(self, question: str) -> list[IndexedChunk]:
-        try:
-            chunks = await self._retrieval_service.retrieve(question)
-            logger.info("battleground_compare_retrieval_completed chunk_count=%s", len(chunks))
-            return chunks
-        except ValueError as exc:
-            if str(exc) not in {
-                "retrieval returned no results",
-                "no results passed relevance threshold",
-            }:
-                raise
-            logger.info("battleground_compare_no_evidence reason=%s", str(exc))
-            return []
-
-    async def _stream_model_side(
+    async def _stream_side(
         self,
         side: str,
-        backend_id: str,
-        provider: str,
-        model: str,
-        system_prompt: str,
-        user_prompt: str,
+        stream: AsyncIterator[str],
         queue: asyncio.Queue[CompareStreamEvent],
     ) -> None:
-        logger.info(
-            "battleground_side_stream_started side=%s backend_id=%s provider=%s model=%s",
-            side,
-            backend_id,
-            provider,
-            model,
-        )
+        logger.info("battleground_side_stream_started side=%s", side)
         chunk_count = 0
         try:
-            async for chunk in self._chat_client.stream_chat_response_with_backend(
-                backend_id,
-                model,
-                system_prompt,
-                user_prompt,
-            ):
+            async for chunk in stream:
                 if chunk == "":
                     continue
                 chunk_count += 1
                 await queue.put(CompareStreamEvent(side=side, kind="chunk", chunk=chunk, error=None))
             logger.info(
-                "battleground_side_stream_completed side=%s backend_id=%s provider=%s "
-                "model=%s chunk_count=%s",
+                "battleground_side_stream_completed side=%s chunk_count=%s",
                 side,
-                backend_id,
-                provider,
-                model,
                 chunk_count,
             )
             await queue.put(CompareStreamEvent(side=side, kind="done", chunk=None, error=None))
         except BaseException as exc:
             if _is_current_task_cancellation(exc):
-                logger.info(
-                    "battleground_side_stream_cancelled side=%s backend_id=%s provider=%s "
-                    "model=%s",
-                    side,
-                    backend_id,
-                    provider,
-                    model,
-                )
+                logger.info("battleground_side_stream_cancelled side=%s", side)
                 raise
             logger.exception(
-                "battleground_side_stream_failed side=%s backend_id=%s provider=%s "
-                "model=%s error=%s",
+                "battleground_side_stream_failed side=%s error=%s",
                 side,
-                backend_id,
-                provider,
-                model,
                 str(exc),
             )
             await queue.put(
