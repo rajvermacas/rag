@@ -22,7 +22,7 @@
   const modelBOutput = requireElement("battleground-model-b-output");
 
   initializeTabNavigation();
-  void initializeBattleground();
+  void initializeBattleground().catch(handleInitializationFailure);
 
   function initializeTabNavigation() {
     navChat.addEventListener("click", () => {
@@ -63,6 +63,12 @@
     modelBOutput.textContent = "";
     battlegroundForm.addEventListener("submit", handleCompareSubmit);
     await loadModelOptions();
+  }
+
+  function handleInitializationFailure(error) {
+    const message = requireErrorMessage(error);
+    setBattlegroundStatus(message);
+    logger.error("battleground_initialization_failed error=%s", message);
   }
 
   async function loadModelOptions() {
@@ -171,6 +177,7 @@
   }
 
   async function streamComparison(payload) {
+    const terminalState = createTerminalState();
     const response = await fetch("/battleground/compare/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -192,19 +199,21 @@
         break;
       }
       buffered += decoder.decode(readResult.value, { stream: true });
-      buffered = consumeNdjsonBuffer(buffered, false);
+      buffered = consumeNdjsonBuffer(buffered, false, terminalState);
     }
     buffered += decoder.decode();
-    consumeNdjsonBuffer(buffered, true);
+    consumeNdjsonBuffer(buffered, true, terminalState);
+    assertTerminalStateComplete(terminalState);
   }
 
-  function consumeNdjsonBuffer(buffered, allowTrailingLine) {
+  function consumeNdjsonBuffer(buffered, allowTrailingLine, terminalState) {
     if (typeof buffered !== "string") {
       throw new Error("ndjson buffer must be a string");
     }
     if (typeof allowTrailingLine !== "boolean") {
       throw new Error("allowTrailingLine must be a boolean");
     }
+    requireTerminalState(terminalState);
     const lines = buffered.split("\n");
     let trailing = lines.pop();
     if (typeof trailing !== "string") {
@@ -218,12 +227,13 @@
       if (line.trim() === "") {
         return;
       }
-      applyStreamEvent(line);
+      applyStreamEvent(line, terminalState);
     });
     return trailing;
   }
 
-  function applyStreamEvent(rawLine) {
+  function applyStreamEvent(rawLine, terminalState) {
+    requireTerminalState(terminalState);
     let event;
     try {
       event = JSON.parse(rawLine);
@@ -249,10 +259,39 @@
       if (event.done !== true) {
         throw new Error("battleground done event must set done=true");
       }
+      terminalState[side] = true;
       appendOutputLine(outputElement, "Done.");
       return;
     }
+    terminalState[side] = true;
     appendOutputLine(outputElement, `Error: ${requireString(event, "error", "battleground error event")}`);
+  }
+
+  function createTerminalState() {
+    return { A: false, B: false };
+  }
+
+  function requireTerminalState(terminalState) {
+    if (typeof terminalState !== "object" || terminalState === null || Array.isArray(terminalState)) {
+      throw new Error("terminal state must be an object");
+    }
+    if (typeof terminalState.A !== "boolean" || typeof terminalState.B !== "boolean") {
+      throw new Error("terminal state must include boolean A and B values");
+    }
+  }
+
+  function assertTerminalStateComplete(terminalState) {
+    requireTerminalState(terminalState);
+    const incompleteSides = [];
+    if (!terminalState.A) {
+      incompleteSides.push("A");
+    }
+    if (!terminalState.B) {
+      incompleteSides.push("B");
+    }
+    if (incompleteSides.length > 0) {
+      throw new Error(`Battleground stream ended before terminal events for side(s): ${incompleteSides.join(", ")}.`);
+    }
   }
 
   function resolveSideOutput(side) {
