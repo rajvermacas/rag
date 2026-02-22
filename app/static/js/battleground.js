@@ -14,6 +14,7 @@
     escapeHtml,
   } = window.RagCommon;
   const logger = console;
+  const MODEL_SELECTION_SEPARATOR = "||";
 
   const navChat = requireElement("nav-chat");
   const navBattleground = requireElement("nav-battleground");
@@ -98,24 +99,58 @@
     if (!("models" in payload) || !Array.isArray(payload.models)) {
       throw new Error("missing 'models' array in battleground model list response");
     }
-    const models = payload.models.map((item, index) => {
-      if (typeof item !== "string" || item.trim() === "") {
-        throw new Error(`model id at index ${index} must be a non-empty string`);
-      }
-      return item;
-    });
-    populateModelSelect(modelASelect, "Select model A", models);
-    populateModelSelect(modelBSelect, "Select model B", models);
+    const modelOptions = normalizeBattlegroundModelOptions(payload.models);
+    populateModelSelect(modelASelect, "Select model A", modelOptions);
+    populateModelSelect(modelBSelect, "Select model B", modelOptions);
     setBattlegroundStatus("Models loaded. Ask a question to start comparison.");
-    logger.info("battleground_models_loading_completed model_count=%s", models.length);
+    logger.info("battleground_models_loading_completed model_count=%s", modelOptions.length);
   }
 
-  function populateModelSelect(selectElement, placeholderLabel, models) {
+  function normalizeBattlegroundModelOptions(rawModelOptions) {
+    if (!Array.isArray(rawModelOptions)) {
+      throw new Error("battleground model options must be an array");
+    }
+    if (rawModelOptions.length === 0) {
+      throw new Error("battleground model list must include at least one model option");
+    }
+    const seen = new Set();
+    return rawModelOptions.map((rawOption, index) => {
+      const normalizedOption = normalizeBattlegroundModelOption(rawOption, index);
+      const selectionValue = encodeModelSelectionValue(
+        normalizedOption.backend_id,
+        normalizedOption.model
+      );
+      if (seen.has(selectionValue)) {
+        throw new Error(
+          `battleground model list contains duplicate backend/model pair: ${selectionValue}`
+        );
+      }
+      seen.add(selectionValue);
+      return normalizedOption;
+    });
+  }
+
+  function normalizeBattlegroundModelOption(rawOption, index) {
+    const context = `models[${index}]`;
+    if (typeof rawOption !== "object" || rawOption === null || Array.isArray(rawOption)) {
+      throw new Error(`battleground model option must be an object at ${context}`);
+    }
+    const backendId = requireString(rawOption, "backend_id", context).trim();
+    const provider = requireString(rawOption, "provider", context).trim();
+    const model = requireString(rawOption, "model", context).trim();
+    const label = requireString(rawOption, "label", context).trim();
+    if (backendId === "" || provider === "" || model === "" || label === "") {
+      throw new Error(`battleground model option fields must not be empty at ${context}`);
+    }
+    return { backend_id: backendId, provider, model, label };
+  }
+
+  function populateModelSelect(selectElement, placeholderLabel, modelOptions) {
     if (typeof placeholderLabel !== "string" || placeholderLabel.trim() === "") {
       throw new Error("model placeholder label must be a non-empty string");
     }
-    if (!Array.isArray(models)) {
-      throw new Error("models must be an array");
+    if (!Array.isArray(modelOptions)) {
+      throw new Error("model options must be an array");
     }
     selectElement.innerHTML = "";
     const placeholderOption = document.createElement("option");
@@ -123,13 +158,31 @@
     placeholderOption.textContent = placeholderLabel;
     placeholderOption.selected = true;
     selectElement.append(placeholderOption);
-    models.forEach((model) => {
+    modelOptions.forEach((modelOption) => {
       const option = document.createElement("option");
-      option.value = model;
-      option.textContent = model;
+      option.value = encodeModelSelectionValue(
+        modelOption.backend_id,
+        modelOption.model
+      );
+      option.textContent = modelOption.label;
       selectElement.append(option);
     });
     selectElement.value = "";
+  }
+
+  function encodeModelSelectionValue(backendId, model) {
+    if (typeof backendId !== "string" || backendId.trim() === "") {
+      throw new Error("model backend_id must be a non-empty string");
+    }
+    if (typeof model !== "string" || model.trim() === "") {
+      throw new Error("model id must be a non-empty string");
+    }
+    if (backendId.includes(MODEL_SELECTION_SEPARATOR) || model.includes(MODEL_SELECTION_SEPARATOR)) {
+      throw new Error(
+        `model backend_id and model must not include '${MODEL_SELECTION_SEPARATOR}'`
+      );
+    }
+    return `${backendId}${MODEL_SELECTION_SEPARATOR}${model}`;
   }
 
   async function handleCompareSubmit(event) {
@@ -137,17 +190,26 @@
     battlegroundSubmit.disabled = true;
     try {
       const message = readRequiredMessage();
-      const modelA = readRequiredModel(modelASelect, "Choose a model for Model A.");
-      const modelB = readRequiredModel(modelBSelect, "Choose a model for Model B.");
-      if (modelA === modelB) {
+      const modelA = readRequiredModelSelection(
+        modelASelect,
+        "Choose a model for Model A."
+      );
+      const modelB = readRequiredModelSelection(
+        modelBSelect,
+        "Choose a model for Model B."
+      );
+      if (modelA.backend_id === modelB.backend_id && modelA.model === modelB.model) {
         throw new Error("Model A and Model B must be different.");
       }
-      setModelTitles(modelA, modelB);
+      setModelTitles(modelA.label, modelB.label);
       const historyPayload = buildRequestHistoryPayload();
       logger.info(
-        "battleground_compare_request_started model_a=%s model_b=%s history_turns=%s",
-        modelA,
-        modelB,
+        "battleground_compare_request_started model_a_backend_id=%s model_a=%s "
+          + "model_b_backend_id=%s model_b=%s history_turns=%s",
+        modelA.backend_id,
+        modelA.model,
+        modelB.backend_id,
+        modelB.model,
         historyPayload.length
       );
       setBattlegroundStatus("Comparing models...");
@@ -157,12 +219,14 @@
         {
           message,
           history: historyPayload,
-          model_a: modelA,
-          model_b: modelB,
+          model_a_backend_id: modelA.backend_id,
+          model_a: modelA.model,
+          model_b_backend_id: modelB.backend_id,
+          model_b: modelB.model,
         },
         sideState
       );
-      appendConversationTurns(message, modelA, modelB, sideState);
+      appendConversationTurns(message, modelA.label, modelB.label, sideState);
       setBattlegroundStatus(buildCompletionStatus(result.erroredSides));
       battlegroundMessage.value = "";
       logger.info(
@@ -211,18 +275,52 @@
     return message;
   }
 
-  function readRequiredModel(selectElement, emptyErrorMessage) {
+  function readRequiredModelSelection(selectElement, emptyErrorMessage) {
     if (typeof emptyErrorMessage !== "string" || emptyErrorMessage.trim() === "") {
       throw new Error("model empty error message must be a non-empty string");
     }
     if (typeof selectElement.value !== "string") {
       throw new Error(`select '${selectElement.id}' value must be a string`);
     }
-    const model = selectElement.value.trim();
-    if (model === "") {
+    const modelSelectionValue = selectElement.value.trim();
+    if (modelSelectionValue === "") {
       throw new Error(emptyErrorMessage);
     }
-    return model;
+    const parsedSelection = parseModelSelectionValue(modelSelectionValue);
+    const selectionLabel = resolveSelectedOptionLabel(selectElement, modelSelectionValue);
+    return {
+      backend_id: parsedSelection.backend_id,
+      model: parsedSelection.model,
+      label: selectionLabel,
+    };
+  }
+
+  function parseModelSelectionValue(value) {
+    if (typeof value !== "string" || value.trim() === "") {
+      throw new Error("model selection value must be a non-empty string");
+    }
+    const parts = value.split(MODEL_SELECTION_SEPARATOR);
+    if (parts.length !== 2) {
+      throw new Error("model selection value is malformed");
+    }
+    const backendId = parts[0].trim();
+    const model = parts[1].trim();
+    if (backendId === "" || model === "") {
+      throw new Error("model selection value contains empty backend_id or model");
+    }
+    return { backend_id: backendId, model };
+  }
+
+  function resolveSelectedOptionLabel(selectElement, value) {
+    const options = Array.from(selectElement.options);
+    const matchedOption = options.find((option) => option.value === value);
+    if (typeof matchedOption === "undefined") {
+      throw new Error(`selected option not found for value: ${value}`);
+    }
+    if (typeof matchedOption.text !== "string" || matchedOption.text.trim() === "") {
+      throw new Error("selected option label must be a non-empty string");
+    }
+    return matchedOption.text;
   }
 
   function createTranscriptStore() {

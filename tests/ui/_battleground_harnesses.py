@@ -176,7 +176,7 @@ globalThis.fetch = async (url, options = {}) => {
   if (url === "/models/battleground") {
     return {
       ok: true,
-      json: async () => ({ models: ["openai/gpt-4o-mini", "anthropic/claude-3.5-sonnet"] }),
+      json: async () => ({ models: [{ backend_id: "lab_vllm", provider: "openai_compatible", model: "openai/gpt-4o-mini", label: "lab_vllm (openai_compatible) · openai/gpt-4o-mini" }, { backend_id: "lab_vllm", provider: "openai_compatible", model: "anthropic/claude-3.5-sonnet", label: "lab_vllm (openai_compatible) · anthropic/claude-3.5-sonnet" }] }),
     };
   }
   if (url === "/battleground/compare/stream") {
@@ -234,8 +234,8 @@ const afterChatTab = {
   battlegroundSelected: elements["nav-battleground"].getAttribute("aria-selected"),
 };
 
-elements["model-a-select"].value = "openai/gpt-4o-mini";
-elements["model-b-select"].value = "anthropic/claude-3.5-sonnet";
+elements["model-a-select"].value = "lab_vllm||openai/gpt-4o-mini";
+elements["model-b-select"].value = "lab_vllm||anthropic/claude-3.5-sonnet";
 elements["battleground-message"].value = "Which answer is better?";
 await elements["battleground-form"].submit();
 const firstRequestBody = fetchCalls[1].body;
@@ -392,7 +392,7 @@ globalThis.fetch = async (url, options = {}) => {
   if (url === "/models/battleground") {
     return {
       ok: true,
-      json: async () => ({ models: ["openai/gpt-4o-mini", "anthropic/claude-3.5-sonnet"] }),
+      json: async () => ({ models: [{ backend_id: "lab_vllm", provider: "openai_compatible", model: "openai/gpt-4o-mini", label: "lab_vllm (openai_compatible) · openai/gpt-4o-mini" }, { backend_id: "lab_vllm", provider: "openai_compatible", model: "anthropic/claude-3.5-sonnet", label: "lab_vllm (openai_compatible) · anthropic/claude-3.5-sonnet" }] }),
     };
   }
   if (url === "/battleground/compare/stream") {
@@ -408,26 +408,26 @@ for (let i = 0; i < 10 && elements["model-a-select"].options.length < 3; i += 1)
 }
 
 const statuses = [];
-elements["model-a-select"].value = "openai/gpt-4o-mini";
-elements["model-b-select"].value = "anthropic/claude-3.5-sonnet";
+elements["model-a-select"].value = "lab_vllm||openai/gpt-4o-mini";
+elements["model-b-select"].value = "lab_vllm||anthropic/claude-3.5-sonnet";
 elements["battleground-message"].value = "   ";
 await elements["battleground-form"].submit();
 statuses.push(elements["battleground-status"].textContent);
 
 elements["model-a-select"].value = "";
-elements["model-b-select"].value = "anthropic/claude-3.5-sonnet";
+elements["model-b-select"].value = "lab_vllm||anthropic/claude-3.5-sonnet";
 elements["battleground-message"].value = "valid question";
 await elements["battleground-form"].submit();
 statuses.push(elements["battleground-status"].textContent);
 
-elements["model-a-select"].value = "openai/gpt-4o-mini";
+elements["model-a-select"].value = "lab_vllm||openai/gpt-4o-mini";
 elements["model-b-select"].value = "";
 elements["battleground-message"].value = "valid question";
 await elements["battleground-form"].submit();
 statuses.push(elements["battleground-status"].textContent);
 
-elements["model-a-select"].value = "openai/gpt-4o-mini";
-elements["model-b-select"].value = "openai/gpt-4o-mini";
+elements["model-a-select"].value = "lab_vllm||openai/gpt-4o-mini";
+elements["model-b-select"].value = "lab_vllm||openai/gpt-4o-mini";
 elements["battleground-message"].value = "valid question";
 await elements["battleground-form"].submit();
 statuses.push(elements["battleground-status"].textContent);
@@ -707,7 +707,7 @@ globalThis.fetch = async (url, options = {}) => {
   if (url === "/models/battleground") {
     return {
       ok: true,
-      json: async () => ({ models: ["openai/gpt-4o-mini", "anthropic/claude-3.5-sonnet"] }),
+      json: async () => ({ models: [{ backend_id: "lab_vllm", provider: "openai_compatible", model: "openai/gpt-4o-mini", label: "lab_vllm (openai_compatible) · openai/gpt-4o-mini" }, { backend_id: "lab_vllm", provider: "openai_compatible", model: "anthropic/claude-3.5-sonnet", label: "lab_vllm (openai_compatible) · anthropic/claude-3.5-sonnet" }] }),
     };
   }
   if (url === "/battleground/compare/stream") {
@@ -741,8 +741,8 @@ for (let i = 0; i < 10 && elements["model-a-select"].options.length < 3; i += 1)
   await Promise.resolve();
 }
 
-elements["model-a-select"].value = "openai/gpt-4o-mini";
-elements["model-b-select"].value = "anthropic/claude-3.5-sonnet";
+elements["model-a-select"].value = "lab_vllm||openai/gpt-4o-mini";
+elements["model-b-select"].value = "lab_vllm||anthropic/claude-3.5-sonnet";
 elements["battleground-message"].value = "Which answer is better?";
 await elements["battleground-form"].submit();
 

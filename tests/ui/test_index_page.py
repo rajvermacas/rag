@@ -20,7 +20,13 @@ class FakeIngestService:
 
 
 class FakeChatService:
-    async def answer_question(self, question: str, history, model: str) -> ChatResult:
+    async def answer_question(
+        self,
+        question: str,
+        history,
+        backend_id: str,
+        model: str,
+    ) -> ChatResult:
         return ChatResult(
             answer="ok",
             citations=[],
@@ -28,7 +34,13 @@ class FakeChatService:
             retrieved_count=0,
         )
 
-    async def stream_answer_question(self, question: str, history, model: str):
+    async def stream_answer_question(
+        self,
+        question: str,
+        history,
+        backend_id: str,
+        model: str,
+    ):
         yield "ok"
 
 
@@ -47,6 +59,9 @@ const chatScript = __CHAT_SCRIPT__;
 const defaultGreeting = __DEFAULT_GREETING__;
 const localStorageRecords = new Map();
 const windowListeners = new Map();
+const fetchCalls = [];
+const encoder = new TextEncoder();
+let pendingMessage = "";
 
 function createElement(id, tagName = "div") {
   const listeners = new Map();
@@ -72,6 +87,12 @@ function createElement(id, tagName = "div") {
       const handlers = listeners.get("click") || [];
       handlers.forEach((handler) => handler({ preventDefault: () => undefined }));
     },
+    submit: async function() {
+      const handlers = listeners.get("submit") || [];
+      for (const handler of handlers) {
+        await handler({ preventDefault: () => undefined });
+      }
+    },
     reset: () => undefined,
   };
 }
@@ -93,14 +114,59 @@ globalThis.localStorage = {
   setItem: (key, value) => localStorageRecords.set(key, value),
 };
 globalThis.crypto = { randomUUID: (() => { let n = 0; return () => `uuid-${++n}`; })() };
-globalThis.fetch = async (url) => {
+globalThis.FormData = function() {
+  return {
+    get: (name) => {
+      if (name === "message") return pendingMessage;
+      return null;
+    },
+  };
+};
+globalThis.fetch = async (url, options = {}) => {
+  const method = typeof options.method === "string" ? options.method : "GET";
+  fetchCalls.push({
+    url,
+    method: method.toUpperCase(),
+    body: "body" in options ? JSON.parse(options.body) : null,
+  });
   if (url === "/models/chat") {
     return {
       ok: true,
-      json: async () => ({ models: ["openai/gpt-4o-mini", "anthropic/claude-3.5-sonnet"] }),
+      json: async () => ({
+        models: [
+          {
+            backend_id: "lab_vllm",
+            provider: "openai_compatible",
+            model: "openai/gpt-4o-mini",
+            label: "lab_vllm (openai_compatible) · openai/gpt-4o-mini",
+          },
+          {
+            backend_id: "lab_vllm",
+            provider: "openai_compatible",
+            model: "anthropic/claude-3.5-sonnet",
+            label: "lab_vllm (openai_compatible) · anthropic/claude-3.5-sonnet",
+          },
+        ],
+      }),
     };
   }
   if (url === "/documents") return { ok: true, json: async () => ({ documents: [] }) };
+  if (url === "/chat/stream") {
+    let emitted = false;
+    return {
+      ok: true,
+      body: {
+        getReader: () => ({
+          read: async () => {
+            if (emitted) return { value: undefined, done: true };
+            emitted = true;
+            return { value: encoder.encode("Revenue is 20."), done: false };
+          },
+        }),
+      },
+      json: async () => ({ detail: "unused" }),
+    };
+  }
   throw new Error(`unexpected fetch url: ${url}`);
 };
 globalThis.confirm = () => true;
@@ -121,6 +187,12 @@ const initialSession = initialPayload.sessions[0];
 const initialMessage = initialSession.messages[0];
 elements["clear-chat"].click();
 const afterClickPayload = JSON.parse(localStorageRecords.get("rag-chat-sessions"));
+const chatModelOptionValues = elements["chat-model-select"].children.map((option) => option.value);
+const chatModelOptionLabels = elements["chat-model-select"].children.map((option) => option.textContent);
+elements["chat-model-select"].value = "lab_vllm||openai/gpt-4o-mini";
+pendingMessage = "What is revenue?";
+await elements["chat-form"].submit();
+const streamRequest = fetchCalls.find((call) => call.url === "/chat/stream");
 
 process.stdout.write(JSON.stringify({
   initialSessionCount: initialPayload.sessions.length,
@@ -128,7 +200,10 @@ process.stdout.write(JSON.stringify({
   initialGreetingText: initialMessage.text,
   isInitialGreetingAssistant: initialMessage.role === "assistant",
   greetingMatchesDefault: initialMessage.text === defaultGreeting,
-  afterClickSessionCount: afterClickPayload.sessions.length
+  afterClickSessionCount: afterClickPayload.sessions.length,
+  chatModelOptionValues,
+  chatModelOptionLabels,
+  streamRequestBody: streamRequest ? streamRequest.body : null
 }));
 })().catch((error) => {
   process.stderr.write(String(error));
@@ -199,7 +274,7 @@ def _build_index_page_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
         chat_service=FakeChatService(),
         document_service=FakeDocumentService(),
         retrieval_service=object(),
-        chat_client=object(),
+        chat_provider_router=object(),
     )
     monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
     return TestClient(create_app())
@@ -276,6 +351,22 @@ def test_chat_script_keeps_single_session_when_new_chat_clicked_from_pristine_gr
     assert payload["initialGreetingText"] == "Hello! How can I assist you today?"
     assert payload["greetingMatchesDefault"] is True
     assert payload["afterClickSessionCount"] == 1
+    assert payload["chatModelOptionValues"] == [
+        "",
+        "lab_vllm||openai/gpt-4o-mini",
+        "lab_vllm||anthropic/claude-3.5-sonnet",
+    ]
+    assert payload["chatModelOptionLabels"] == [
+        "Select model",
+        "lab_vllm (openai_compatible) · openai/gpt-4o-mini",
+        "lab_vllm (openai_compatible) · anthropic/claude-3.5-sonnet",
+    ]
+    assert payload["streamRequestBody"] == {
+        "message": "What is revenue?",
+        "history": [{"role": "user", "message": "What is revenue?"}],
+        "backend_id": "lab_vllm",
+        "model": "openai/gpt-4o-mini",
+    }
 
 
 def test_compiled_css_contains_chat_alignment_utilities(

@@ -9,6 +9,7 @@
   const CHAT_STORAGE_KEY = "rag-chat-sessions";
   const DEFAULT_CHAT_GREETING = "Hello! How can I assist you today?";
   const CHAT_MODELS_ENDPOINT = "/models/chat";
+  const MODEL_SELECTION_SEPARATOR = "||";
 
   const uploadForm = requireElement("upload-form");
   const uploadButton = requireElement("upload-button");
@@ -90,7 +91,7 @@
       if (message === "") {
         return;
       }
-      const model = readSelectedChatModel();
+      const selectedModel = readSelectedChatModelSelection();
 
       appendUserMessage(message);
       conversationHistory.push({ role: "user", message });
@@ -102,7 +103,7 @@
         const answer = await streamAssistantResponse(
           message,
           conversationHistory,
-          model,
+          selectedModel,
           thinkingMessageId
         );
         conversationHistory.push({ role: "assistant", message: answer });
@@ -131,15 +132,31 @@
     chatButton.disabled = chatModelSelect.value.trim() === "";
   }
 
-  function readSelectedChatModel() {
+  function readSelectedChatModelSelection() {
     if (typeof chatModelSelect.value !== "string") {
       throw new Error("chat model select value must be a string");
     }
-    const normalizedModel = chatModelSelect.value.trim();
-    if (normalizedModel === "") {
+    const normalizedSelectionValue = chatModelSelect.value.trim();
+    if (normalizedSelectionValue === "") {
       throw new Error("chat model must be selected");
     }
-    return normalizedModel;
+    return parseChatModelSelectionValue(normalizedSelectionValue);
+  }
+
+  function parseChatModelSelectionValue(value) {
+    if (typeof value !== "string" || value.trim() === "") {
+      throw new Error("chat model selection value must be a non-empty string");
+    }
+    const parts = value.split(MODEL_SELECTION_SEPARATOR);
+    if (parts.length !== 2) {
+      throw new Error("chat model selection value is malformed");
+    }
+    const backendId = parts[0].trim();
+    const model = parts[1].trim();
+    if (backendId === "" || model === "") {
+      throw new Error("chat model selection value contains empty backend_id or model");
+    }
+    return { backend_id: backendId, model };
   }
 
   async function loadChatModels() {
@@ -170,18 +187,16 @@
       throw new Error("chat model list must include at least one model");
     }
     const seen = new Set();
-    models.forEach((model, index) => {
-      if (typeof model !== "string") {
-        throw new Error(`chat model id must be a string at models[${index}]`);
+    models.forEach((modelOption, index) => {
+      const normalizedOption = normalizeChatModelOption(modelOption, index);
+      const modelKey = encodeChatModelSelectionValue(
+        normalizedOption.backend_id,
+        normalizedOption.model
+      );
+      if (seen.has(modelKey)) {
+        throw new Error(`chat model list contains duplicate backend/model pair: ${modelKey}`);
       }
-      const normalizedModel = model.trim();
-      if (normalizedModel === "") {
-        throw new Error(`chat model id must not be empty at models[${index}]`);
-      }
-      if (seen.has(normalizedModel)) {
-        throw new Error(`chat model list contains duplicate model id: ${normalizedModel}`);
-      }
-      seen.add(normalizedModel);
+      seen.add(modelKey);
     });
   }
 
@@ -193,18 +208,55 @@
     return option;
   }
 
-  function createChatModelOption(model, index) {
-    if (typeof model !== "string") {
-      throw new Error(`chat model id must be a string at models[${index}]`);
-    }
-    const normalizedModel = model.trim();
-    if (normalizedModel === "") {
-      throw new Error(`chat model id must not be empty at models[${index}]`);
-    }
+  function createChatModelOption(modelOption, index) {
+    const normalizedOption = normalizeChatModelOption(modelOption, index);
     const option = document.createElement("option");
-    option.value = normalizedModel;
-    option.textContent = normalizedModel;
+    option.value = encodeChatModelSelectionValue(
+      normalizedOption.backend_id,
+      normalizedOption.model
+    );
+    option.textContent = normalizedOption.label;
     return option;
+  }
+
+  function normalizeChatModelOption(modelOption, index) {
+    const context = `models[${index}]`;
+    if (typeof modelOption !== "object" || modelOption === null || Array.isArray(modelOption)) {
+      throw new Error(`chat model option must be an object at ${context}`);
+    }
+    const backendId = requireString(modelOption, "backend_id", context).trim();
+    const provider = requireString(modelOption, "provider", context).trim();
+    const model = requireString(modelOption, "model", context).trim();
+    const label = requireString(modelOption, "label", context).trim();
+    if (backendId === "") {
+      throw new Error(`chat model backend_id must not be empty at ${context}`);
+    }
+    if (provider === "") {
+      throw new Error(`chat model provider must not be empty at ${context}`);
+    }
+    if (model === "") {
+      throw new Error(`chat model id must not be empty at ${context}`);
+    }
+    if (label === "") {
+      throw new Error(`chat model label must not be empty at ${context}`);
+    }
+    return { backend_id: backendId, provider, model, label };
+  }
+
+  function encodeChatModelSelectionValue(backendId, model) {
+    if (typeof backendId !== "string" || backendId.trim() === "") {
+      throw new Error("chat model backend_id must be a non-empty string");
+    }
+    if (typeof model !== "string" || model.trim() === "") {
+      throw new Error("chat model id must be a non-empty string");
+    }
+    if (backendId.includes(MODEL_SELECTION_SEPARATOR)) {
+      throw new Error(`chat model backend_id must not include '${MODEL_SELECTION_SEPARATOR}'`);
+    }
+    if (model.includes(MODEL_SELECTION_SEPARATOR)) {
+      throw new Error(`chat model id must not include '${MODEL_SELECTION_SEPARATOR}'`);
+    }
+    return `${backendId}${MODEL_SELECTION_SEPARATOR}${model}`;
   }
 
   function setUploadButtonLoadingState(isLoading) {
@@ -565,11 +617,16 @@
     return row;
   }
 
-  async function streamAssistantResponse(message, history, model, thinkingMessageId) {
+  async function streamAssistantResponse(message, history, modelSelection, thinkingMessageId) {
+    if (typeof modelSelection !== "object" || modelSelection === null || Array.isArray(modelSelection)) {
+      throw new Error("chat model selection must be an object");
+    }
+    const backendId = requireString(modelSelection, "backend_id", "chat model selection");
+    const model = requireString(modelSelection, "model", "chat model selection");
     const response = await fetch("/chat/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, history, model }),
+      body: JSON.stringify({ message, history, backend_id: backendId, model }),
     });
     if (!response.ok) {
       const payload = await response.json();

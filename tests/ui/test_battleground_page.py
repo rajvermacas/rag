@@ -23,7 +23,13 @@ class FakeIngestService:
 
 
 class FakeChatService:
-    async def answer_question(self, question: str, history, model: str) -> ChatResult:
+    async def answer_question(
+        self,
+        question: str,
+        history,
+        backend_id: str,
+        model: str,
+    ) -> ChatResult:
         return ChatResult(
             answer="ok",
             citations=[],
@@ -31,7 +37,13 @@ class FakeChatService:
             retrieved_count=0,
         )
 
-    async def stream_answer_question(self, question: str, history, model: str):
+    async def stream_answer_question(
+        self,
+        question: str,
+        history,
+        backend_id: str,
+        model: str,
+    ):
         yield "ok"
 
 
@@ -49,7 +61,7 @@ def _build_index_page_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
         chat_service=FakeChatService(),
         document_service=FakeDocumentService(),
         retrieval_service=object(),
-        chat_client=object(),
+        chat_provider_router=object(),
     )
     monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
     return TestClient(create_app())
@@ -74,13 +86,13 @@ def test_battleground_script_loads_models_renders_markdown_supports_follow_ups_a
 
     assert payload["modelAOptions"] == [
         "",
-        "openai/gpt-4o-mini",
-        "anthropic/claude-3.5-sonnet",
+        "lab_vllm||openai/gpt-4o-mini",
+        "lab_vllm||anthropic/claude-3.5-sonnet",
     ]
     assert payload["modelBOptions"] == [
         "",
-        "openai/gpt-4o-mini",
-        "anthropic/claude-3.5-sonnet",
+        "lab_vllm||openai/gpt-4o-mini",
+        "lab_vllm||anthropic/claude-3.5-sonnet",
     ]
     assert payload["fetchCalls"][0] == {"url": "/models/battleground", "method": "GET", "body": None}
     assert payload["fetchCalls"][1] == {
@@ -89,7 +101,9 @@ def test_battleground_script_loads_models_renders_markdown_supports_follow_ups_a
         "body": {
             "message": "Which answer is better?",
             "history": [],
+            "model_a_backend_id": "lab_vllm",
             "model_a": "openai/gpt-4o-mini",
+            "model_b_backend_id": "lab_vllm",
             "model_b": "anthropic/claude-3.5-sonnet",
         },
     }
@@ -100,8 +114,11 @@ def test_battleground_script_loads_models_renders_markdown_supports_follow_ups_a
     assert len(payload["secondRequestBody"]["history"]) > 0
     assert payload["secondRequestBody"]["history"][0]["role"] == "user"
     assert payload["secondRequestBody"]["history"][0]["message"] == "Which answer is better?"
-    assert payload["modelATitle"] == "Model A · openai/gpt-4o-mini"
-    assert payload["modelBTitle"] == "Model B · anthropic/claude-3.5-sonnet"
+    assert payload["modelATitle"] == "Model A · lab_vllm (openai_compatible) · openai/gpt-4o-mini"
+    assert (
+        payload["modelBTitle"]
+        == "Model B · lab_vllm (openai_compatible) · anthropic/claude-3.5-sonnet"
+    )
     read_snapshots = payload["readSnapshots"]
     assert "Thinking..." in read_snapshots[0]["modelAHtml"]
     assert "Thinking..." in read_snapshots[0]["modelBHtml"]
@@ -152,13 +169,13 @@ def test_battleground_script_fails_fast_on_invalid_client_inputs(
 
     assert payload["modelAOptions"] == [
         "",
-        "openai/gpt-4o-mini",
-        "anthropic/claude-3.5-sonnet",
+        "lab_vllm||openai/gpt-4o-mini",
+        "lab_vllm||anthropic/claude-3.5-sonnet",
     ]
     assert payload["modelBOptions"] == [
         "",
-        "openai/gpt-4o-mini",
-        "anthropic/claude-3.5-sonnet",
+        "lab_vllm||openai/gpt-4o-mini",
+        "lab_vllm||anthropic/claude-3.5-sonnet",
     ]
     assert payload["statuses"] == [
         "Enter a prompt before starting comparison.",
