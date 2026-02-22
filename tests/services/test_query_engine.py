@@ -160,6 +160,39 @@ def test_stream_answer_question_yields_token_chunks_in_order() -> None:
     assert chunks == ["Hello ", "world"]
 
 
+def test_stream_answer_question_preserves_newline_chunks_for_markdown_lists() -> None:
+    service = build_query_engine_service_with_stream(
+        [
+            "The policy is called HDFC Life Click2Achieve.",
+            "\n",
+            "- **Policy term:** 30 years",
+            "\n",
+            "- **Premium-paying term:** 12 years",
+        ]
+    )
+
+    async def collect() -> list[str]:
+        chunks = []
+        async for chunk in service.stream_answer_question(
+            question="Summarize this policy",
+            history=[],
+            backend_id="openrouter_lab",
+            model="openai/gpt-4o-mini",
+        ):
+            chunks.append(chunk)
+        return chunks
+
+    chunks = asyncio.run(collect())
+
+    assert chunks == [
+        "The policy is called HDFC Life Click2Achieve.",
+        "\n",
+        "- **Policy term:** 30 years",
+        "\n",
+        "- **Premium-paying term:** 12 years",
+    ]
+
+
 def test_stream_answer_question_replaces_empty_stream_with_message() -> None:
     service = build_query_engine_service_with_stream(["", "   "])
 

@@ -127,11 +127,15 @@ class QueryEngineService:
         emitted_chunk_count = 0
         emitted_visible_chunk_count = 0
         async for chunk in _iter_response_chunks(response):
-            normalized_chunk = chunk.strip()
-            if normalized_chunk == "":
+            if chunk == "":
                 continue
             emitted_chunk_count += 1
             visible_chunk = _remove_inline_citations(chunk).strip()
+            if visible_chunk == "":
+                if emitted_visible_chunk_count == 0:
+                    continue
+                yield chunk
+                continue
             if _is_effectively_empty_response_text(visible_chunk):
                 continue
             emitted_visible_chunk_count += 1
