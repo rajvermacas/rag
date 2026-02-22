@@ -62,6 +62,7 @@ def test_llm_registry_openrouter_configuration_uses_openai_compatible_base_url()
 
     assert getattr(llm, "api_base") == "https://openrouter.ai/api/v1"
     assert getattr(llm, "model") == "openai/gpt-4o-mini"
+    assert getattr(llm, "is_chat_model") is True
 
 
 def test_registry_azure_provider_requires_model_deployment_mapping() -> None:

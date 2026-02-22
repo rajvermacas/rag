@@ -60,15 +60,18 @@ def _build_llamaindex_llm(profile: ChatBackendProfile, model: str) -> Any:
 def _build_openrouter_llm(profile: ChatBackendProfile, model: str) -> Any:
     openai_like = _import_openai_like_class()
     logger.info(
-        "llm_registry_openrouter_configured backend_id=%s model=%s api_base=%s",
+        "llm_registry_openrouter_configured backend_id=%s model=%s api_base=%s "
+        "is_chat_model=%s",
         profile.backend_id,
         model,
         _OPENROUTER_API_BASE_URL,
+        True,
     )
     return openai_like(
         model=model,
         api_key=profile.api_key,
         api_base=_OPENROUTER_API_BASE_URL,
+        is_chat_model=True,
     )
 
 
