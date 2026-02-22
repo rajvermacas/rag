@@ -51,7 +51,7 @@
     if (tabId === "chat") {
       navChat.setAttribute("aria-selected", "true");
       navChat.className =
-        "rounded-xl border border-zinc-900 bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition";
+        "rounded-xl border border-zinc-600 bg-zinc-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-500";
       navBattleground.setAttribute("aria-selected", "false");
       navBattleground.className =
         "rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-red-500 hover:text-red-600";
@@ -65,7 +65,7 @@
         "rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-red-500 hover:text-red-600";
       navBattleground.setAttribute("aria-selected", "true");
       navBattleground.className =
-        "rounded-xl border border-zinc-900 bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition";
+        "rounded-xl border border-zinc-600 bg-zinc-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-500";
       chatSection.classList.add("hidden");
       battlegroundSection.classList.remove("hidden");
       return;
