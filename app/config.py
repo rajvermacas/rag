@@ -11,9 +11,10 @@ from dotenv import load_dotenv
 
 
 logger = logging.getLogger(__name__)
-_PROVIDER_OPENAI_COMPATIBLE = "openai_compatible"
+_PROVIDER_OPENROUTER = "openrouter"
+_PROVIDER_OPENAI = "openai"
 _PROVIDER_AZURE_OPENAI = "azure_openai"
-_ALLOWED_PROVIDERS = (_PROVIDER_OPENAI_COMPATIBLE, _PROVIDER_AZURE_OPENAI)
+_ALLOWED_PROVIDERS = (_PROVIDER_OPENROUTER, _PROVIDER_OPENAI, _PROVIDER_AZURE_OPENAI)
 _BACKEND_ID_PATTERN = re.compile(r"^[A-Za-z0-9_]+$")
 
 
@@ -146,37 +147,60 @@ def _parse_chat_backend_profile(backend_id: str) -> ChatBackendProfile:
     if provider not in _ALLOWED_PROVIDERS:
         raise ValueError(
             f"{provider_env} must be one of: "
-            f"{_PROVIDER_OPENAI_COMPATIBLE}, {_PROVIDER_AZURE_OPENAI}"
+            f"{_PROVIDER_OPENROUTER}, {_PROVIDER_OPENAI}, {_PROVIDER_AZURE_OPENAI}"
         )
     models = _parse_required_csv_with_uniqueness(
         f"CHAT_BACKEND_{backend_token}_MODELS",
         duplicate_error_label="model ids",
     )
     api_key = _require_env(f"CHAT_BACKEND_{backend_token}_API_KEY")
-    if provider == _PROVIDER_OPENAI_COMPATIBLE:
-        return _build_openai_compatible_profile(backend_id, backend_token, models, api_key)
+    if provider == _PROVIDER_OPENROUTER:
+        return _build_openrouter_profile(backend_id, models, api_key)
+    if provider == _PROVIDER_OPENAI:
+        return _build_openai_profile(backend_id, models, api_key)
     return _build_azure_profile(backend_id, backend_token, models, api_key)
 
 
-def _build_openai_compatible_profile(
+def _build_openrouter_profile(
     backend_id: str,
-    backend_token: str,
     models: tuple[str, ...],
     api_key: str,
 ) -> ChatBackendProfile:
-    base_url = _require_env(f"CHAT_BACKEND_{backend_token}_BASE_URL")
     logger.info(
         "validated_chat_backend backend_id=%s provider=%s model_count=%s",
         backend_id,
-        _PROVIDER_OPENAI_COMPATIBLE,
+        _PROVIDER_OPENROUTER,
         len(models),
     )
     return ChatBackendProfile(
         backend_id=backend_id,
-        provider=_PROVIDER_OPENAI_COMPATIBLE,
+        provider=_PROVIDER_OPENROUTER,
         models=models,
         api_key=api_key,
-        base_url=base_url,
+        base_url=None,
+        azure_endpoint=None,
+        azure_api_version=None,
+        azure_deployments=MappingProxyType({}),
+    )
+
+
+def _build_openai_profile(
+    backend_id: str,
+    models: tuple[str, ...],
+    api_key: str,
+) -> ChatBackendProfile:
+    logger.info(
+        "validated_chat_backend backend_id=%s provider=%s model_count=%s",
+        backend_id,
+        _PROVIDER_OPENAI,
+        len(models),
+    )
+    return ChatBackendProfile(
+        backend_id=backend_id,
+        provider=_PROVIDER_OPENAI,
+        models=models,
+        api_key=api_key,
+        base_url=None,
         azure_endpoint=None,
         azure_api_version=None,
         azure_deployments=MappingProxyType({}),

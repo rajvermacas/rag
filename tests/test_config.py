@@ -18,19 +18,26 @@ def _set_common_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("APP_LOG_LEVEL", "INFO")
 
 
-def _set_openai_compatible_backend(
+def _set_openrouter_backend(
     monkeypatch: pytest.MonkeyPatch,
     backend_id: str,
     models: str,
 ) -> None:
     backend_token = backend_id.upper()
-    monkeypatch.setenv(f"CHAT_BACKEND_{backend_token}_PROVIDER", "openai_compatible")
+    monkeypatch.setenv(f"CHAT_BACKEND_{backend_token}_PROVIDER", "openrouter")
     monkeypatch.setenv(f"CHAT_BACKEND_{backend_token}_MODELS", models)
-    monkeypatch.setenv(f"CHAT_BACKEND_{backend_token}_API_KEY", "test-chat-key")
-    monkeypatch.setenv(
-        f"CHAT_BACKEND_{backend_token}_BASE_URL",
-        "https://lab.example.com/v1",
-    )
+    monkeypatch.setenv(f"CHAT_BACKEND_{backend_token}_API_KEY", "test-openrouter-chat-key")
+
+
+def _set_openai_backend(
+    monkeypatch: pytest.MonkeyPatch,
+    backend_id: str,
+    models: str,
+) -> None:
+    backend_token = backend_id.upper()
+    monkeypatch.setenv(f"CHAT_BACKEND_{backend_token}_PROVIDER", "openai")
+    monkeypatch.setenv(f"CHAT_BACKEND_{backend_token}_MODELS", models)
+    monkeypatch.setenv(f"CHAT_BACKEND_{backend_token}_API_KEY", "test-openai-chat-key")
 
 
 def _set_azure_backend(
@@ -54,10 +61,10 @@ def _set_azure_backend(
 def test_missing_openrouter_api_key_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     _set_common_env(monkeypatch)
     monkeypatch.setenv("CHAT_BACKEND_IDS", "lab_vllm")
-    _set_openai_compatible_backend(
+    _set_openrouter_backend(
         monkeypatch=monkeypatch,
         backend_id="lab_vllm",
-        models="gpt-4o-mini",
+        models="openai/gpt-4o-mini",
     )
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
 
@@ -84,31 +91,58 @@ def test_unknown_backend_provider_raises(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setenv("CHAT_BACKEND_LAB_VLLM_PROVIDER", "unexpected_provider")
     monkeypatch.setenv("CHAT_BACKEND_LAB_VLLM_MODELS", "gpt-4o-mini")
     monkeypatch.setenv("CHAT_BACKEND_LAB_VLLM_API_KEY", "test-chat-key")
-    monkeypatch.setenv("CHAT_BACKEND_LAB_VLLM_BASE_URL", "https://lab.example.com/v1")
 
     with pytest.raises(
         ValueError,
         match=(
             "CHAT_BACKEND_LAB_VLLM_PROVIDER must be one of: "
-            "openai_compatible, azure_openai"
+            "openrouter, openai, azure_openai"
         ),
     ):
         Settings.from_env()
 
 
-def test_openai_compatible_backend_requires_base_url(
+def test_settings_accepts_openrouter_openai_and_azure_providers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_common_env(monkeypatch)
+    monkeypatch.setenv("CHAT_BACKEND_IDS", "openrouter_lab,openai_prod,azure_prod")
+    _set_openrouter_backend(
+        monkeypatch=monkeypatch,
+        backend_id="openrouter_lab",
+        models="openai/gpt-4o-mini",
+    )
+    _set_openai_backend(
+        monkeypatch=monkeypatch,
+        backend_id="openai_prod",
+        models="gpt-4o-mini",
+    )
+    _set_azure_backend(
+        monkeypatch=monkeypatch,
+        backend_id="azure_prod",
+        models="gpt-4o-mini",
+        deployments="gpt-4o-mini=chat-gpt4o-mini",
+    )
+
+    settings = Settings.from_env()
+
+    assert settings.chat_backend_profiles["openrouter_lab"].provider == "openrouter"
+    assert settings.chat_backend_profiles["openai_prod"].provider == "openai"
+    assert settings.chat_backend_profiles["azure_prod"].provider == "azure_openai"
+
+
+def test_openai_backend_requires_api_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _set_common_env(monkeypatch)
     monkeypatch.setenv("CHAT_BACKEND_IDS", "lab_vllm")
-    monkeypatch.setenv("CHAT_BACKEND_LAB_VLLM_PROVIDER", "openai_compatible")
+    monkeypatch.setenv("CHAT_BACKEND_LAB_VLLM_PROVIDER", "openai")
     monkeypatch.setenv("CHAT_BACKEND_LAB_VLLM_MODELS", "gpt-4o-mini")
-    monkeypatch.setenv("CHAT_BACKEND_LAB_VLLM_API_KEY", "test-chat-key")
-    monkeypatch.delenv("CHAT_BACKEND_LAB_VLLM_BASE_URL", raising=False)
+    monkeypatch.delenv("CHAT_BACKEND_LAB_VLLM_API_KEY", raising=False)
 
     with pytest.raises(
         ValueError,
-        match="Missing required environment variable: CHAT_BACKEND_LAB_VLLM_BASE_URL",
+        match="Missing required environment variable: CHAT_BACKEND_LAB_VLLM_API_KEY",
     ):
         Settings.from_env()
 
@@ -116,17 +150,17 @@ def test_openai_compatible_backend_requires_base_url(
 def test_backend_models_reject_duplicates(monkeypatch: pytest.MonkeyPatch) -> None:
     _set_common_env(monkeypatch)
     monkeypatch.setenv("CHAT_BACKEND_IDS", "lab_vllm")
-    _set_openai_compatible_backend(
+    _set_openrouter_backend(
         monkeypatch=monkeypatch,
         backend_id="lab_vllm",
-        models="gpt-4o-mini,gpt-4o-mini",
+        models="openai/gpt-4o-mini,openai/gpt-4o-mini",
     )
 
     with pytest.raises(
         ValueError,
         match=(
             "CHAT_BACKEND_LAB_VLLM_MODELS must not contain duplicate model ids: "
-            "gpt-4o-mini"
+            "openai/gpt-4o-mini"
         ),
     ):
         Settings.from_env()
@@ -159,10 +193,10 @@ def test_settings_parse_two_chat_backends_success(
 ) -> None:
     _set_common_env(monkeypatch)
     monkeypatch.setenv("CHAT_BACKEND_IDS", "lab_vllm,azure_prod")
-    _set_openai_compatible_backend(
+    _set_openrouter_backend(
         monkeypatch=monkeypatch,
         backend_id="lab_vllm",
-        models="gpt-4o-mini,gpt-4.1-mini",
+        models="openai/gpt-4o-mini,anthropic/claude-3.5-sonnet",
     )
     _set_azure_backend(
         monkeypatch=monkeypatch,
@@ -173,7 +207,7 @@ def test_settings_parse_two_chat_backends_success(
 
     settings = Settings.from_env()
 
-    assert settings.chat_backend_profiles["lab_vllm"].provider == "openai_compatible"
+    assert settings.chat_backend_profiles["lab_vllm"].provider == "openrouter"
     assert (
         settings.chat_backend_profiles["azure_prod"].azure_deployments["gpt-4o-mini"]
         == "chat-gpt4o-mini"
@@ -183,10 +217,10 @@ def test_settings_parse_two_chat_backends_success(
 def test_invalid_integer_env_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     _set_common_env(monkeypatch)
     monkeypatch.setenv("CHAT_BACKEND_IDS", "lab_vllm")
-    _set_openai_compatible_backend(
+    _set_openrouter_backend(
         monkeypatch=monkeypatch,
         backend_id="lab_vllm",
-        models="gpt-4o-mini",
+        models="openai/gpt-4o-mini",
     )
     monkeypatch.setenv("MAX_UPLOAD_MB", "bad-int")
 
@@ -200,10 +234,10 @@ def test_invalid_integer_env_raises(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_settings_from_env_success(monkeypatch: pytest.MonkeyPatch) -> None:
     _set_common_env(monkeypatch)
     monkeypatch.setenv("CHAT_BACKEND_IDS", "lab_vllm")
-    _set_openai_compatible_backend(
+    _set_openrouter_backend(
         monkeypatch=monkeypatch,
         backend_id="lab_vllm",
-        models="gpt-4o-mini",
+        models="openai/gpt-4o-mini",
     )
 
     settings = Settings.from_env()
