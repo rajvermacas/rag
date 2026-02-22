@@ -115,7 +115,8 @@ def test_battleground_script_loads_models_renders_markdown_supports_follow_ups_a
     assert "w-full max-w-full rounded-xl border border-red-200 bg-white p-3 shadow-sm" in payload["modelBHtml"]
     assert payload["modelAHtml"].count("<strong>hi</strong>") == 2
     assert payload["modelBHtml"].count("<em>hi</em>") == 2
-    assert payload["modelAHtml"].count("Done.") == 2
+    assert "Done." not in payload["modelAHtml"]
+    assert "Done." not in payload["modelBHtml"]
     assert payload["modelBHtml"].count("Error: B failed") == 2
     assert payload["finalStatus"] == "Comparison complete with side errors on: B."
     assert payload["afterBattlegroundTab"] == {

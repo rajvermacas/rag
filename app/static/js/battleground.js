@@ -451,7 +451,6 @@
       }
       terminalState[side] = true;
       renderState.thinking = false;
-      renderState.terminalText = appendTerminalText(renderState.terminalText, "Done.");
       renderSide(side);
       return;
     }
