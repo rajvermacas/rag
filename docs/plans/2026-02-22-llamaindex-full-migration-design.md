@@ -3,6 +3,12 @@
 **Date:** 2026-02-22  
 **Status:** Approved
 
+## Implementation Update (2026-02-22)
+- Service wiring now uses `IndexingService` + `LLMRegistry` + `QueryEngineService` as active runtime paths.
+- Battleground comparisons stream through the same query-service backend/model path as chat.
+- Deprecated native transport modules (`openrouter_client`, `openai_compatible_chat_provider`, `azure_openai_chat_provider`) are removed from active code paths.
+- API/UI workflow contracts remain stable for upload, chat, chat stream, model listing, battleground compare stream, and document list/delete.
+
 ## Objective
 Migrate the existing native RAG implementation to a LlamaIndex-centered architecture using battle-tested libraries while preserving all current UI workflows.
 

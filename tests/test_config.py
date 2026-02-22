@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 import pytest
 
@@ -263,3 +264,10 @@ def test_load_environment_from_dotenv_sets_environment(
 
     assert loaded is True
     assert os.getenv("OPENROUTER_API_KEY") == "from-dotenv"
+
+
+def test_env_example_contains_required_provider_fields() -> None:
+    content = Path(".env.example").read_text(encoding="utf-8")
+    assert "CHAT_BACKEND_OPENROUTER_LAB_PROVIDER=openrouter" in content
+    assert "CHAT_BACKEND_OPENAI_PROD_PROVIDER=openai" in content
+    assert "CHAT_BACKEND_AZURE_PROD_PROVIDER=azure_openai" in content
