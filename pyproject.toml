@@ -26,6 +26,7 @@ dependencies = [
   "llama-index-vector-stores-chroma==0.4.2",
   "llama-index-readers-file==0.4.11",
   "openai==1.109.1",
+  "docx2txt>=0.9",
 ]
 
 [project.optional-dependencies]
