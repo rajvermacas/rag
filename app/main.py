@@ -20,7 +20,7 @@ from app.logging_config import configure_logging
 from app.services.azure_openai_chat_provider import AzureOpenAIChatProvider
 from app.services.battleground import BattlegroundService, CompareStreamEvent
 from app.services.chat import ChatService, ConversationTurn
-from app.services.chat_provider_models import BackendChatProvider
+from app.services.chat_provider_models import BackendChatProvider, ChatModelOption
 from app.services.chat_provider_router import ChatProviderRouter
 from app.services.documents import DocumentService
 from app.services.ingest import IngestService
@@ -47,7 +47,13 @@ class ChatHistoryTurn(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     history: list[ChatHistoryTurn]
+    backend_id: str
     model: str
+
+    @field_validator("backend_id")
+    @classmethod
+    def validate_backend_id(cls, value: str) -> str:
+        return _require_non_empty_payload_value(value, "backend_id")
 
     @field_validator("model")
     @classmethod
@@ -65,7 +71,9 @@ class ChatResponse(BaseModel):
 class BattlegroundCompareRequest(BaseModel):
     message: str
     history: list[ChatHistoryTurn]
+    model_a_backend_id: str
     model_a: str
+    model_b_backend_id: str
     model_b: str
 
     @field_validator("message")
@@ -73,10 +81,20 @@ class BattlegroundCompareRequest(BaseModel):
     def validate_message(cls, value: str) -> str:
         return _require_non_empty_payload_value(value, "message")
 
+    @field_validator("model_a_backend_id")
+    @classmethod
+    def validate_model_a_backend_id(cls, value: str) -> str:
+        return _require_non_empty_payload_value(value, "model_a_backend_id")
+
     @field_validator("model_a")
     @classmethod
     def validate_model_a(cls, value: str) -> str:
         return _require_non_empty_payload_value(value, "model_a")
+
+    @field_validator("model_b_backend_id")
+    @classmethod
+    def validate_model_b_backend_id(cls, value: str) -> str:
+        return _require_non_empty_payload_value(value, "model_b_backend_id")
 
     @field_validator("model_b")
     @classmethod
@@ -84,12 +102,19 @@ class BattlegroundCompareRequest(BaseModel):
         return _require_non_empty_payload_value(value, "model_b")
 
 
+class ChatModelOptionResponse(BaseModel):
+    backend_id: str
+    provider: str
+    model: str
+    label: str
+
+
 class BattlegroundModelsResponse(BaseModel):
-    models: list[str]
+    models: list[ChatModelOptionResponse]
 
 
 class ChatModelsResponse(BaseModel):
-    models: list[str]
+    models: list[ChatModelOptionResponse]
 
 
 class DocumentSummaryResponse(BaseModel):
@@ -375,30 +400,38 @@ def _register_chat_routes(
 ) -> None:
     @app.get("/models/chat")
     async def list_chat_models() -> ChatModelsResponse:
+        model_options = services.chat_provider_router.list_model_options()
         logger.info(
             "chat_models_list_requested model_count=%s",
-            len(settings.openrouter_battleground_models),
+            len(model_options),
         )
-        return ChatModelsResponse(models=list(settings.openrouter_battleground_models))
+        return ChatModelsResponse(
+            models=_to_chat_model_option_responses(model_options),
+        )
 
     @app.post("/chat")
     async def chat(payload: ChatRequest) -> ChatResponse:
         try:
-            selected_model = _require_allowed_chat_model(
-                payload.model,
-                settings.openrouter_battleground_models,
+            selected_option = _require_allowed_chat_model_option(
+                backend_id=payload.backend_id,
+                model=payload.model,
+                model_options=services.chat_provider_router.list_model_options(),
             )
             logger.info(
-                "chat_endpoint_called message_length=%s history_turns=%s model=%s",
+                "chat_endpoint_called message_length=%s history_turns=%s backend_id=%s "
+                "provider=%s model=%s",
                 len(payload.message),
                 len(payload.history),
-                selected_model,
+                selected_option.backend_id,
+                selected_option.provider,
+                selected_option.model,
             )
             history = _to_conversation_history(payload.history)
             result = await services.chat_service.answer_question(
-                payload.message,
-                history,
-                selected_model,
+                question=payload.message,
+                history=history,
+                backend_id=selected_option.backend_id,
+                model=selected_option.model,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -412,22 +445,27 @@ def _register_chat_routes(
     @app.post("/chat/stream")
     async def chat_stream(payload: ChatRequest) -> StreamingResponse:
         try:
-            selected_model = _require_allowed_chat_model(
-                payload.model,
-                settings.openrouter_battleground_models,
+            selected_option = _require_allowed_chat_model_option(
+                backend_id=payload.backend_id,
+                model=payload.model,
+                model_options=services.chat_provider_router.list_model_options(),
             )
             logger.info(
-                "chat_stream_endpoint_called message_length=%s history_turns=%s model=%s",
+                "chat_stream_endpoint_called message_length=%s history_turns=%s "
+                "backend_id=%s provider=%s model=%s",
                 len(payload.message),
                 len(payload.history),
-                selected_model,
+                selected_option.backend_id,
+                selected_option.provider,
+                selected_option.model,
             )
             history = _to_conversation_history(payload.history)
             stream = await _resolve_chat_stream(
                 services.chat_service.stream_answer_question(
-                    payload.message,
-                    history,
-                    selected_model,
+                    question=payload.message,
+                    history=history,
+                    backend_id=selected_option.backend_id,
+                    model=selected_option.model,
                 )
             )
         except ValueError as exc:
@@ -442,31 +480,53 @@ def _register_battleground_routes(
 ) -> None:
     @app.get("/models/battleground")
     async def list_battleground_models() -> BattlegroundModelsResponse:
+        model_options = services.chat_provider_router.list_model_options()
         logger.info(
             "battleground_models_list_requested model_count=%s",
-            len(settings.openrouter_battleground_models),
+            len(model_options),
         )
-        return BattlegroundModelsResponse(models=list(settings.openrouter_battleground_models))
+        return BattlegroundModelsResponse(
+            models=_to_chat_model_option_responses(model_options),
+        )
 
     @app.post("/battleground/compare/stream")
     async def battleground_compare_stream(payload: BattlegroundCompareRequest) -> StreamingResponse:
+        model_options = services.chat_provider_router.list_model_options()
         logger.info(
             "battleground_compare_stream_endpoint_called message_length=%s history_turns=%s "
-            "model_a=%s model_b=%s",
+            "model_a_backend_id=%s model_a=%s model_b_backend_id=%s model_b=%s",
             len(payload.message),
             len(payload.history),
+            payload.model_a_backend_id,
             payload.model_a,
+            payload.model_b_backend_id,
             payload.model_b,
         )
         history = _to_conversation_history(payload.history)
         try:
+            selected_option_a = _require_allowed_chat_model_option(
+                backend_id=payload.model_a_backend_id,
+                model=payload.model_a,
+                model_options=model_options,
+            )
+            selected_option_b = _require_allowed_chat_model_option(
+                backend_id=payload.model_b_backend_id,
+                model=payload.model_b,
+                model_options=model_options,
+            )
+            _validate_distinct_battleground_model_choices(
+                selected_option_a,
+                selected_option_b,
+            )
             battleground_service = _build_battleground_service(services)
             stream = await _prime_battleground_stream(
                 battleground_service.compare_stream(
                     question=payload.message,
                     history=history,
-                    model_a=payload.model_a,
-                    model_b=payload.model_b,
+                    model_a_backend_id=selected_option_a.backend_id,
+                    model_a=selected_option_a.model,
+                    model_b_backend_id=selected_option_b.backend_id,
+                    model_b=selected_option_b.model,
                 )
             )
         except ValueError as exc:
@@ -481,13 +541,51 @@ def _to_conversation_history(history: list[ChatHistoryTurn]) -> list[Conversatio
     return [ConversationTurn(role=turn.role, message=turn.message) for turn in history]
 
 
-def _require_allowed_chat_model(model: str, allowed_models: tuple[str, ...]) -> str:
+def _to_chat_model_option_responses(
+    model_options: tuple[ChatModelOption, ...],
+) -> list[ChatModelOptionResponse]:
+    return [
+        ChatModelOptionResponse(
+            backend_id=option.backend_id,
+            provider=option.provider,
+            model=option.model,
+            label=option.label,
+        )
+        for option in model_options
+    ]
+
+
+def _require_allowed_chat_model_option(
+    backend_id: str,
+    model: str,
+    model_options: tuple[ChatModelOption, ...],
+) -> ChatModelOption:
+    normalized_backend_id = backend_id.strip()
     normalized_model = model.strip()
+    if normalized_backend_id == "":
+        raise ValueError("backend_id must not be empty")
     if normalized_model == "":
         raise ValueError("model must not be empty")
-    if normalized_model not in allowed_models:
-        raise ValueError("model is not allowed")
-    return normalized_model
+    backend_matches = [
+        option for option in model_options if option.backend_id == normalized_backend_id
+    ]
+    if len(backend_matches) == 0:
+        raise ValueError("backend_id is not allowed")
+    for option in backend_matches:
+        if option.model == normalized_model:
+            return option
+    raise ValueError("model is not allowed for backend_id")
+
+
+def _validate_distinct_battleground_model_choices(
+    model_option_a: ChatModelOption,
+    model_option_b: ChatModelOption,
+) -> None:
+    if (
+        model_option_a.backend_id == model_option_b.backend_id
+        and model_option_a.model == model_option_b.model
+    ):
+        raise ValueError("model_a and model_b must be different")
 
 
 async def _stream_chat_chunks(stream: AsyncIterator[str]) -> AsyncIterator[str]:

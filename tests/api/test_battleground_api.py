@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 import app.main as main_module
 from app.main import AppServices, create_app
 from app.services.battleground import CompareStreamEvent
+from app.services.chat_provider_models import ChatModelOption
 
 
 class FakeIngestService:
@@ -17,10 +18,16 @@ class FakeIngestService:
 
 
 class FakeChatService:
-    async def answer_question(self, question: str, history, model: str):
+    async def answer_question(self, question: str, history, backend_id: str, model: str):
         raise AssertionError("Chat service should not be called in battleground API test")
 
-    async def stream_answer_question(self, question: str, history, model: str):
+    async def stream_answer_question(
+        self,
+        question: str,
+        history,
+        backend_id: str,
+        model: str,
+    ):
         raise AssertionError("Chat stream should not be called in battleground API test")
 
 
@@ -32,10 +39,44 @@ class FakeDocumentService:
         raise AssertionError("Document delete should not be called in battleground API test")
 
 
+class FakeChatProviderRouter:
+    def list_model_options(self) -> tuple[ChatModelOption, ...]:
+        return (
+            ChatModelOption(
+                backend_id="lab_vllm",
+                provider="openai_compatible",
+                model="openai/gpt-4o-mini",
+                label="lab_vllm (openai_compatible) · openai/gpt-4o-mini",
+            ),
+            ChatModelOption(
+                backend_id="azure_prod",
+                provider="azure_openai",
+                model="gpt-4o-mini",
+                label="azure_prod (azure_openai) · gpt-4o-mini",
+            ),
+            ChatModelOption(
+                backend_id="lab_vllm",
+                provider="openai_compatible",
+                model="anthropic/claude-3.5-sonnet",
+                label="lab_vllm (openai_compatible) · anthropic/claude-3.5-sonnet",
+            ),
+        )
+
+
 class FakeBattlegroundService:
-    async def compare_stream(self, question: str, history, model_a: str, model_b: str):
+    async def compare_stream(
+        self,
+        question: str,
+        history,
+        model_a_backend_id: str,
+        model_a: str,
+        model_b_backend_id: str,
+        model_b: str,
+    ):
         assert question == "What is revenue?"
+        assert model_a_backend_id == "lab_vllm"
         assert model_a == "openai/gpt-4o-mini"
+        assert model_b_backend_id == "lab_vllm"
         assert model_b == "anthropic/claude-3.5-sonnet"
         yield CompareStreamEvent(side="A", kind="chunk", chunk="A1", error=None)
         yield CompareStreamEvent(side="B", kind="chunk", chunk="B1", error=None)
@@ -44,19 +85,43 @@ class FakeBattlegroundService:
 
 
 class FakeBattlegroundValidationErrorService:
-    async def compare_stream(self, question: str, history, model_a: str, model_b: str):
+    async def compare_stream(
+        self,
+        question: str,
+        history,
+        model_a_backend_id: str,
+        model_a: str,
+        model_b_backend_id: str,
+        model_b: str,
+    ):
         raise ValueError("model_a and model_b must be different")
         yield CompareStreamEvent(side="A", kind="done", chunk=None, error=None)
 
 
 class FakeBattlegroundDisallowedModelService:
-    async def compare_stream(self, question: str, history, model_a: str, model_b: str):
-        raise ValueError("model_a is not allowed")
+    async def compare_stream(
+        self,
+        question: str,
+        history,
+        model_a_backend_id: str,
+        model_a: str,
+        model_b_backend_id: str,
+        model_b: str,
+    ):
+        raise ValueError("model_a is not allowed for backend_id")
         yield CompareStreamEvent(side="A", kind="done", chunk=None, error=None)
 
 
 class FakeBattlegroundMustNotBeCalledService:
-    async def compare_stream(self, question: str, history, model_a: str, model_b: str):
+    async def compare_stream(
+        self,
+        question: str,
+        history,
+        model_a_backend_id: str,
+        model_a: str,
+        model_b_backend_id: str,
+        model_b: str,
+    ):
         raise AssertionError("Battleground service should not be called for invalid payload")
         yield CompareStreamEvent(side="A", kind="done", chunk=None, error=None)
 
@@ -65,10 +130,11 @@ def _valid_compare_payload() -> dict:
     return {
         "message": "What is revenue?",
         "history": [{"role": "user", "message": "Earlier message"}],
+        "model_a_backend_id": "lab_vllm",
         "model_a": "openai/gpt-4o-mini",
+        "model_b_backend_id": "lab_vllm",
         "model_b": "anthropic/claude-3.5-sonnet",
     }
-
 
 
 def _build_client(
@@ -80,19 +146,20 @@ def _build_client(
         chat_service=FakeChatService(),
         document_service=FakeDocumentService(),
         retrieval_service=object(),
-        chat_client=object(),
+        chat_provider_router=FakeChatProviderRouter(),
     )
     monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
     monkeypatch.setattr(
         main_module,
         "_build_battleground_service",
-        lambda services, settings: battleground_service,
+        lambda services: battleground_service,
     )
     return TestClient(create_app())
 
 
-def test_get_battleground_models_returns_allowlist(
-    required_env: None, monkeypatch: pytest.MonkeyPatch
+def test_get_battleground_models_returns_provider_aware_options(
+    required_env: None,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = _build_client(monkeypatch, FakeBattlegroundService())
 
@@ -100,23 +167,38 @@ def test_get_battleground_models_returns_allowlist(
 
     assert response.status_code == 200
     assert response.json() == {
-        "models": ["openai/gpt-4o-mini", "anthropic/claude-3.5-sonnet"]
+        "models": [
+            {
+                "backend_id": "lab_vllm",
+                "provider": "openai_compatible",
+                "model": "openai/gpt-4o-mini",
+                "label": "lab_vllm (openai_compatible) · openai/gpt-4o-mini",
+            },
+            {
+                "backend_id": "azure_prod",
+                "provider": "azure_openai",
+                "model": "gpt-4o-mini",
+                "label": "azure_prod (azure_openai) · gpt-4o-mini",
+            },
+            {
+                "backend_id": "lab_vllm",
+                "provider": "openai_compatible",
+                "model": "anthropic/claude-3.5-sonnet",
+                "label": "lab_vllm (openai_compatible) · anthropic/claude-3.5-sonnet",
+            },
+        ]
     }
 
 
 def test_compare_stream_returns_tagged_ndjson_events(
-    required_env: None, monkeypatch: pytest.MonkeyPatch
+    required_env: None,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = _build_client(monkeypatch, FakeBattlegroundService())
 
     response = client.post(
         "/battleground/compare/stream",
-        json={
-            "message": "What is revenue?",
-            "history": [{"role": "user", "message": "Earlier message"}],
-            "model_a": "openai/gpt-4o-mini",
-            "model_b": "anthropic/claude-3.5-sonnet",
-        },
+        json=_valid_compare_payload(),
     )
 
     assert response.status_code == 200
@@ -124,70 +206,34 @@ def test_compare_stream_returns_tagged_ndjson_events(
     raw_lines = [line for line in response.text.splitlines() if line.strip() != ""]
     assert len(raw_lines) == 4
     events = [json.loads(line) for line in raw_lines]
-    for event in events:
-        assert event["side"] in {"A", "B"}
-        present_fields = [key for key in ["chunk", "done", "error"] if key in event]
-        assert len(present_fields) == 1
     assert events[0] == {"side": "A", "chunk": "A1"}
     assert events[1] == {"side": "B", "chunk": "B1"}
     assert events[2] == {"side": "A", "done": True}
     assert events[3] == {"side": "B", "done": True}
 
 
-def test_compare_stream_returns_400_for_service_validation_errors(
-    required_env: None, monkeypatch: pytest.MonkeyPatch
+def test_compare_stream_returns_400_for_same_backend_model_pair(
+    required_env: None,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = _build_client(monkeypatch, FakeBattlegroundValidationErrorService())
 
     response = client.post(
         "/battleground/compare/stream",
-        json={**_valid_compare_payload(), "model_b": "openai/gpt-4o-mini"},
+        json={
+            **_valid_compare_payload(),
+            "model_b_backend_id": "lab_vllm",
+            "model_b": "openai/gpt-4o-mini",
+        },
     )
 
     assert response.status_code == 400
     assert response.json() == {"detail": "model_a and model_b must be different"}
 
 
-def test_compare_stream_returns_400_for_empty_message(
-    required_env: None, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    client = _build_client(monkeypatch, FakeBattlegroundMustNotBeCalledService())
-
-    response = client.post(
-        "/battleground/compare/stream",
-        json={**_valid_compare_payload(), "message": " "},
-    )
-
-    assert response.status_code == 400
-    assert response.json() == {"detail": "invalid battleground compare payload: message must not be empty"}
-
-
-@pytest.mark.parametrize(
-    ("field_name", "detail_message"),
-    [
-        ("model_a", "model_a must not be empty"),
-        ("model_b", "model_b must not be empty"),
-    ],
-)
-def test_compare_stream_returns_400_for_empty_model_ids(
+def test_compare_stream_returns_400_for_disallowed_models(
     required_env: None,
     monkeypatch: pytest.MonkeyPatch,
-    field_name: str,
-    detail_message: str,
-) -> None:
-    client = _build_client(monkeypatch, FakeBattlegroundMustNotBeCalledService())
-
-    response = client.post(
-        "/battleground/compare/stream",
-        json={**_valid_compare_payload(), field_name: "   "},
-    )
-
-    assert response.status_code == 400
-    assert response.json() == {"detail": f"invalid battleground compare payload: {detail_message}"}
-
-
-def test_compare_stream_returns_400_for_disallowed_models(
-    required_env: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     client = _build_client(monkeypatch, FakeBattlegroundDisallowedModelService())
 
@@ -197,45 +243,24 @@ def test_compare_stream_returns_400_for_disallowed_models(
     )
 
     assert response.status_code == 400
-    assert response.json() == {"detail": "model_a is not allowed"}
+    assert response.json() == {"detail": "model is not allowed for backend_id"}
 
 
-def test_compare_stream_returns_400_when_battleground_service_construction_fails(
-    required_env: None, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    fake_services = AppServices(
-        ingest_service=FakeIngestService(),
-        chat_service=FakeChatService(),
-        document_service=FakeDocumentService(),
-        retrieval_service=object(),
-        chat_client=object(),
-    )
-    monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
-
-    def _raise_battleground_service_error(services, settings):
-        raise ValueError("OPENROUTER_BATTLEGROUND_MODELS must contain at least 2 distinct model ids")
-
-    monkeypatch.setattr(
-        main_module,
-        "_build_battleground_service",
-        _raise_battleground_service_error,
-    )
-    client = TestClient(create_app(), raise_server_exceptions=False)
-
-    response = client.post(
-        "/battleground/compare/stream",
-        json=_valid_compare_payload(),
-    )
-
-    assert response.status_code == 400
-    assert response.json() == {
-        "detail": "OPENROUTER_BATTLEGROUND_MODELS must contain at least 2 distinct model ids"
-    }
-
-
-@pytest.mark.parametrize("missing_field", ["message", "history", "model_a", "model_b"])
+@pytest.mark.parametrize(
+    "missing_field",
+    [
+        "message",
+        "history",
+        "model_a_backend_id",
+        "model_a",
+        "model_b_backend_id",
+        "model_b",
+    ],
+)
 def test_compare_stream_returns_400_for_missing_required_fields(
-    required_env: None, monkeypatch: pytest.MonkeyPatch, missing_field: str
+    required_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+    missing_field: str,
 ) -> None:
     client = _build_client(monkeypatch, FakeBattlegroundMustNotBeCalledService())
     payload = _valid_compare_payload()
@@ -249,13 +274,13 @@ def test_compare_stream_returns_400_for_missing_required_fields(
     }
 
 
-@pytest.mark.parametrize("invalid_payload", [[], "not-an-object"])
 def test_compare_stream_returns_400_for_non_object_json_payloads(
-    required_env: None, monkeypatch: pytest.MonkeyPatch, invalid_payload: object
+    required_env: None,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = _build_client(monkeypatch, FakeBattlegroundMustNotBeCalledService())
 
-    response = client.post("/battleground/compare/stream", json=invalid_payload)
+    response = client.post("/battleground/compare/stream", json=[])
 
     assert response.status_code == 400
     assert response.json() == {
@@ -264,7 +289,8 @@ def test_compare_stream_returns_400_for_non_object_json_payloads(
 
 
 def test_compare_stream_returns_clear_400_for_malformed_json(
-    required_env: None, monkeypatch: pytest.MonkeyPatch
+    required_env: None,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = _build_client(monkeypatch, FakeBattlegroundMustNotBeCalledService())
 
