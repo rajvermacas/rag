@@ -55,3 +55,16 @@ There are couple of things which needs to be fixed/implemented:
 3. There should be no Documents tab. Documents shoulld be visible just below the Upload button with filename and delete button.
 
 ----------------------------
+
+There are couple of things which needs to be fixed/implemented:
+1. In the chatbot UI there should be a default message on a new chat saying "Hello! How can I assist you today?"
+2. I want a model batteground in a new section/tab
+3. Here If I give a prompt then two chatbots side by side with different models should give back the response so that an end user should be able to judge which one gave a better response.
+------------------------------
+
+There are couple of things which needs to be fixed/implemented:
+1. On the batteground In the comparison output view it says Model A and Model B - it should clearly mention which model it is
+2. The output of Model A and model B should have formatting like markdown - right now it is just a text on a single line without any formatting.
+3. The question input should not be like a separate section. It should be like a chatbot where a user can even ask follow up question.
+4. When the response is awaited there should be some `thinking...` in animation so that the end user knows that the app is not stuck or hanged.
+5. The comparison output section is very narrow - Fix its width
