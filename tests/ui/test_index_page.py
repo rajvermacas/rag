@@ -215,6 +215,11 @@ def test_index_page_has_chat_and_battleground_scaffolds(
     assert 'id="battleground-form"' in html
     assert 'id="model-a-select"' in html
     assert 'id="model-b-select"' in html
+    assert 'id="battleground-model-a-title"' in html
+    assert 'id="battleground-model-b-title"' in html
+    assert 'id="battleground-comparison-panel"' in html
+    assert "Ask a follow-up question for both models..." in html
+    assert "md:grid-cols-[minmax(18rem,20rem)_minmax(0,1.8fr)]" in html
     assert 'id="documents-list"' in html
     assert 'id="refresh-documents"' in html
     assert 'id="chat-history-select"' in html

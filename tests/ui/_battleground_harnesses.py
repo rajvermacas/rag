@@ -130,6 +130,8 @@ const elements = {
   "model-b-select": createSelectWithPlaceholder("model-b-select", "Select model B"),
   "battleground-message": createElement("battleground-message", "textarea"),
   "battleground-status": createElement("battleground-status", "p"),
+  "battleground-model-a-title": createElement("battleground-model-a-title", "h4"),
+  "battleground-model-b-title": createElement("battleground-model-b-title", "h4"),
   "battleground-model-a-output": createElement("battleground-model-a-output", "div"),
   "battleground-model-b-output": createElement("battleground-model-b-output", "div"),
 };
@@ -140,8 +142,8 @@ elements["nav-battleground"].setAttribute("aria-selected", "false");
 
 const encoder = new TextEncoder();
 const streamChunks = [
-  encoder.encode("{\\"side\\":\\"A\\",\\"chunk\\":\\"A says hi\\"}\\n"),
-  encoder.encode("{\\"side\\":\\"B\\",\\"chunk\\":\\"B says hi\\"}\\n{\\"side\\":\\"A\\",\\"done\\":true}\\n"),
+  encoder.encode("{\\"side\\":\\"A\\",\\"chunk\\":\\"A says **hi**\\"}\\n"),
+  encoder.encode("{\\"side\\":\\"B\\",\\"chunk\\":\\"B says *hi*\\"}\\n{\\"side\\":\\"A\\",\\"done\\":true}\\n"),
   encoder.encode("{\\"side\\":\\"B\\",\\"error\\":\\"B failed\\"}\\n"),
 ];
 
@@ -154,7 +156,10 @@ globalThis.document = {
     return createElement("", tag);
   },
 };
-globalThis.marked = { setOptions: () => undefined, parse: (value) => value };
+globalThis.marked = {
+  setOptions: () => undefined,
+  parse: (value) => String(value).replace(/\\*\\*(.*?)\\*\\*/g, "<strong>$1</strong>").replace(/\\*(.*?)\\*/g, "<em>$1</em>").replace(/\\n/g, "<br/>"),
+};
 globalThis.DOMPurify = { sanitize: (value) => value };
 globalThis.addEventListener = (eventName, handler) => {
   if (!windowListeners.has(eventName)) windowListeners.set(eventName, []);
@@ -184,6 +189,8 @@ globalThis.fetch = async (url, options = {}) => {
             readSnapshots.push({
               modelA: elements["battleground-model-a-output"].textContent,
               modelB: elements["battleground-model-b-output"].textContent,
+              modelAHtml: elements["battleground-model-a-output"].innerHTML,
+              modelBHtml: elements["battleground-model-b-output"].innerHTML,
               status: elements["battleground-status"].textContent,
             });
             if (chunkIndex >= streamChunks.length) {
@@ -231,14 +238,24 @@ elements["model-a-select"].value = "openai/gpt-4o-mini";
 elements["model-b-select"].value = "anthropic/claude-3.5-sonnet";
 elements["battleground-message"].value = "Which answer is better?";
 await elements["battleground-form"].submit();
+const firstRequestBody = fetchCalls[1].body;
+elements["battleground-message"].value = "Can you follow up with examples?";
+await elements["battleground-form"].submit();
+const secondRequestBody = fetchCalls[2].body;
 
 process.stdout.write(JSON.stringify({
   modelAOptions: elements["model-a-select"].options.map((option) => option.value),
   modelBOptions: elements["model-b-select"].options.map((option) => option.value),
   fetchCalls,
+  firstRequestBody,
+  secondRequestBody,
   readSnapshots,
+  modelATitle: elements["battleground-model-a-title"].textContent,
+  modelBTitle: elements["battleground-model-b-title"].textContent,
   modelAOutput: elements["battleground-model-a-output"].textContent,
   modelBOutput: elements["battleground-model-b-output"].textContent,
+  modelAHtml: elements["battleground-model-a-output"].innerHTML,
+  modelBHtml: elements["battleground-model-b-output"].innerHTML,
   finalStatus: elements["battleground-status"].textContent,
   afterBattlegroundTab,
   afterChatTab,
@@ -347,6 +364,8 @@ const elements = {
   "model-b-select": createSelectWithPlaceholder("model-b-select", "Select model B"),
   "battleground-message": createElement("battleground-message", "textarea"),
   "battleground-status": createElement("battleground-status", "p"),
+  "battleground-model-a-title": createElement("battleground-model-a-title", "h4"),
+  "battleground-model-b-title": createElement("battleground-model-b-title", "h4"),
   "battleground-model-a-output": createElement("battleground-model-a-output", "div"),
   "battleground-model-b-output": createElement("battleground-model-b-output", "div"),
 };
@@ -518,6 +537,8 @@ const elements = {
   "model-b-select": createSelectWithPlaceholder("model-b-select", "Select model B"),
   "battleground-message": createElement("battleground-message", "textarea"),
   "battleground-status": createElement("battleground-status", "p"),
+  "battleground-model-a-title": createElement("battleground-model-a-title", "h4"),
+  "battleground-model-b-title": createElement("battleground-model-b-title", "h4"),
   "battleground-model-a-output": createElement("battleground-model-a-output", "div"),
   "battleground-model-b-output": createElement("battleground-model-b-output", "div"),
 };
@@ -664,6 +685,8 @@ const elements = {
   "model-b-select": createSelectWithPlaceholder("model-b-select", "Select model B"),
   "battleground-message": createElement("battleground-message", "textarea"),
   "battleground-status": createElement("battleground-status", "p"),
+  "battleground-model-a-title": createElement("battleground-model-a-title", "h4"),
+  "battleground-model-b-title": createElement("battleground-model-b-title", "h4"),
   "battleground-model-a-output": createElement("battleground-model-a-output", "div"),
   "battleground-model-b-output": createElement("battleground-model-b-output", "div"),
 };
@@ -727,6 +750,8 @@ process.stdout.write(JSON.stringify({
   finalStatus: elements["battleground-status"].textContent,
   modelAOutput: elements["battleground-model-a-output"].textContent,
   modelBOutput: elements["battleground-model-b-output"].textContent,
+  modelAHtml: elements["battleground-model-a-output"].innerHTML,
+  modelBHtml: elements["battleground-model-b-output"].innerHTML,
 }));
 })().catch((error) => {
   process.stderr.write(String(error));
@@ -765,4 +790,3 @@ def _run_battleground_harness(
     if not isinstance(payload, dict):
         raise RuntimeError(f"node harness output for {context} must be an object")
     return payload
-

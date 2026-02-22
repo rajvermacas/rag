@@ -55,7 +55,7 @@ def _build_index_page_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     return TestClient(create_app())
 
 
-def test_battleground_script_loads_models_streams_side_outputs_and_preserves_tabs(
+def test_battleground_script_loads_models_renders_markdown_supports_follow_ups_and_preserves_tabs(
     required_env: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     client = _build_index_page_client(monkeypatch)
@@ -93,13 +93,22 @@ def test_battleground_script_loads_models_streams_side_outputs_and_preserves_tab
             "model_b": "anthropic/claude-3.5-sonnet",
         },
     }
+    assert payload["fetchCalls"][2]["url"] == "/battleground/compare/stream"
+    assert payload["firstRequestBody"] == payload["fetchCalls"][1]["body"]
+    assert payload["secondRequestBody"] == payload["fetchCalls"][2]["body"]
+    assert payload["secondRequestBody"]["message"] == "Can you follow up with examples?"
+    assert len(payload["secondRequestBody"]["history"]) > 0
+    assert payload["secondRequestBody"]["history"][0]["role"] == "user"
+    assert payload["secondRequestBody"]["history"][0]["message"] == "Which answer is better?"
+    assert payload["modelATitle"] == "Model A · openai/gpt-4o-mini"
+    assert payload["modelBTitle"] == "Model B · anthropic/claude-3.5-sonnet"
     read_snapshots = payload["readSnapshots"]
-    assert read_snapshots[1]["modelA"] == "A says hi"
-    assert read_snapshots[1]["modelB"] == ""
-    assert read_snapshots[2]["modelA"] == "A says hi\nDone."
-    assert read_snapshots[2]["modelB"] == "B says hi"
-    assert payload["modelAOutput"] == "A says hi\nDone."
-    assert payload["modelBOutput"] == "B says hi\nError: B failed"
+    assert "Thinking..." in read_snapshots[0]["modelAHtml"]
+    assert "Thinking..." in read_snapshots[0]["modelBHtml"]
+    assert "<strong>hi</strong>" in payload["modelAHtml"]
+    assert "<em>hi</em>" in payload["modelBHtml"]
+    assert "Done." in payload["modelAHtml"]
+    assert "Error: B failed" in payload["modelBHtml"]
     assert payload["finalStatus"] == "Comparison complete with side errors on: B."
     assert payload["afterBattlegroundTab"] == {
         "chatHidden": True,
@@ -191,7 +200,7 @@ def test_battleground_script_reports_error_when_stream_ends_without_terminal_eve
         "ui battleground.js truncated stream test",
     )
 
-    assert payload["modelAOutput"] == "A partial"
-    assert payload["modelBOutput"] == "B partial"
+    assert "A partial" in payload["modelAHtml"]
+    assert "B partial" in payload["modelBHtml"]
     assert payload["finalStatus"] == "Battleground stream ended before terminal events for side(s): A, B."
     assert payload["finalStatus"] != "Comparison complete."

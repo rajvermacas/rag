@@ -5,7 +5,13 @@
     throw new Error("RagCommon is required before battleground.js");
   }
 
-  const { requireElement, requireString, requireErrorMessage } = window.RagCommon;
+  const {
+    requireElement,
+    requireString,
+    requireErrorMessage,
+    renderMarkdown,
+    removeCitationArtifacts,
+  } = window.RagCommon;
   const logger = console;
 
   const navChat = requireElement("nav-chat");
@@ -18,8 +24,12 @@
   const modelASelect = requireElement("model-a-select");
   const modelBSelect = requireElement("model-b-select");
   const battlegroundStatus = requireElement("battleground-status");
+  const modelATitle = requireElement("battleground-model-a-title");
+  const modelBTitle = requireElement("battleground-model-b-title");
   const modelAOutput = requireElement("battleground-model-a-output");
   const modelBOutput = requireElement("battleground-model-b-output");
+
+  const battlegroundHistory = [];
 
   initializeTabNavigation();
   void initializeBattleground().catch(handleInitializationFailure);
@@ -37,18 +47,22 @@
   function setActiveTab(tabId) {
     if (tabId === "chat") {
       navChat.setAttribute("aria-selected", "true");
-      navChat.className = "rounded-xl border border-zinc-900 bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition";
+      navChat.className =
+        "rounded-xl border border-zinc-900 bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition";
       navBattleground.setAttribute("aria-selected", "false");
-      navBattleground.className = "rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-red-500 hover:text-red-600";
+      navBattleground.className =
+        "rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-red-500 hover:text-red-600";
       chatSection.classList.remove("hidden");
       battlegroundSection.classList.add("hidden");
       return;
     }
     if (tabId === "battleground") {
       navChat.setAttribute("aria-selected", "false");
-      navChat.className = "rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-red-500 hover:text-red-600";
+      navChat.className =
+        "rounded-xl border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-red-500 hover:text-red-600";
       navBattleground.setAttribute("aria-selected", "true");
-      navBattleground.className = "rounded-xl border border-zinc-900 bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition";
+      navBattleground.className =
+        "rounded-xl border border-zinc-900 bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition";
       chatSection.classList.add("hidden");
       battlegroundSection.classList.remove("hidden");
       return;
@@ -59,8 +73,8 @@
   async function initializeBattleground() {
     ensureSelectHasPlaceholder(modelASelect);
     ensureSelectHasPlaceholder(modelBSelect);
-    modelAOutput.textContent = "";
-    modelBOutput.textContent = "";
+    resetModelTitles();
+    clearOutputs();
     battlegroundForm.addEventListener("submit", handleCompareSubmit);
     await loadModelOptions();
   }
@@ -90,7 +104,7 @@
     });
     populateModelSelect(modelASelect, "Select model A", models);
     populateModelSelect(modelBSelect, "Select model B", models);
-    setBattlegroundStatus("Models loaded. Start comparison.");
+    setBattlegroundStatus("Models loaded. Ask a question to start comparison.");
     logger.info("battleground_models_loading_completed model_count=%s", models.length);
   }
 
@@ -120,23 +134,39 @@
     event.preventDefault();
     battlegroundSubmit.disabled = true;
     try {
-      clearOutputs();
       const message = readRequiredMessage();
       const modelA = readRequiredModel(modelASelect, "Choose a model for Model A.");
       const modelB = readRequiredModel(modelBSelect, "Choose a model for Model B.");
       if (modelA === modelB) {
         throw new Error("Model A and Model B must be different.");
       }
+      setModelTitles(modelA, modelB);
+      const historyPayload = buildRequestHistoryPayload();
+      logger.info(
+        "battleground_compare_request_started model_a=%s model_b=%s history_turns=%s",
+        modelA,
+        modelB,
+        historyPayload.length
+      );
       setBattlegroundStatus("Comparing models...");
-      logger.info("battleground_compare_request_started model_a=%s model_b=%s", modelA, modelB);
-      const erroredSides = await streamComparison({
-        message,
-        history: [],
-        model_a: modelA,
-        model_b: modelB,
-      });
-      setBattlegroundStatus(buildCompletionStatus(erroredSides));
-      logger.info("battleground_compare_request_completed");
+      const sideState = createSideState();
+      renderThinkingState(sideState);
+      const result = await streamComparison(
+        {
+          message,
+          history: historyPayload,
+          model_a: modelA,
+          model_b: modelB,
+        },
+        sideState
+      );
+      appendConversationTurns(message, modelA, modelB, sideState);
+      setBattlegroundStatus(buildCompletionStatus(result.erroredSides));
+      battlegroundMessage.value = "";
+      logger.info(
+        "battleground_compare_request_completed history_turns=%s",
+        historyPayload.length + 2
+      );
     } catch (error) {
       const message = requireErrorMessage(error);
       setBattlegroundStatus(message);
@@ -147,8 +177,24 @@
   }
 
   function clearOutputs() {
-    modelAOutput.textContent = "";
-    modelBOutput.textContent = "";
+    modelAOutput.innerHTML = "";
+    modelBOutput.innerHTML = "";
+  }
+
+  function resetModelTitles() {
+    modelATitle.textContent = "Model A";
+    modelBTitle.textContent = "Model B";
+  }
+
+  function setModelTitles(modelA, modelB) {
+    if (typeof modelA !== "string" || modelA.trim() === "") {
+      throw new Error("modelA title value must be a non-empty string");
+    }
+    if (typeof modelB !== "string" || modelB.trim() === "") {
+      throw new Error("modelB title value must be a non-empty string");
+    }
+    modelATitle.textContent = `Model A · ${modelA}`;
+    modelBTitle.textContent = `Model B · ${modelB}`;
   }
 
   function readRequiredMessage() {
@@ -176,7 +222,66 @@
     return model;
   }
 
-  async function streamComparison(payload) {
+  function createSideState() {
+    return {
+      A: { markdownText: "", terminalText: "", thinking: true },
+      B: { markdownText: "", terminalText: "", thinking: true },
+    };
+  }
+
+  function requireSideState(sideState) {
+    if (typeof sideState !== "object" || sideState === null || Array.isArray(sideState)) {
+      throw new Error("side state must be an object");
+    }
+    if (!("A" in sideState) || !("B" in sideState)) {
+      throw new Error("side state must include A and B records");
+    }
+  }
+
+  function resolveSideState(sideState, side) {
+    requireSideState(sideState);
+    if (side === "A" || side === "B") {
+      return sideState[side];
+    }
+    throw new Error(`unsupported battleground side: ${side}`);
+  }
+
+  function renderThinkingState(sideState) {
+    clearOutputs();
+    renderSide("A", sideState);
+    renderSide("B", sideState);
+  }
+
+  function renderSide(side, sideState) {
+    const state = resolveSideState(sideState, side);
+    const outputElement = resolveSideOutput(side);
+    const combinedText = buildCombinedSideText(state);
+    const cleanedText = removeCitationArtifacts(combinedText);
+    const markdownHtml = cleanedText.trim() === "" ? "" : renderMarkdown(cleanedText);
+    const thinkingHtml = state.thinking
+      ? "<p class=\"mt-2 text-sm text-zinc-500 animate-pulse\">Thinking...</p>"
+      : "";
+    outputElement.innerHTML = `<div class="markdown-body">${markdownHtml}</div>${thinkingHtml}`;
+  }
+
+  function buildCombinedSideText(state) {
+    if (typeof state !== "object" || state === null || Array.isArray(state)) {
+      throw new Error("side render state must be an object");
+    }
+    if (typeof state.markdownText !== "string" || typeof state.terminalText !== "string") {
+      throw new Error("side render state must include markdownText and terminalText strings");
+    }
+    if (state.terminalText === "") {
+      return state.markdownText;
+    }
+    if (state.markdownText === "") {
+      return state.terminalText;
+    }
+    return `${state.markdownText}\n${state.terminalText}`;
+  }
+
+  async function streamComparison(payload, sideState) {
+    requireSideState(sideState);
     const terminalState = createTerminalState();
     const response = await fetch("/battleground/compare/stream", {
       method: "POST",
@@ -199,15 +304,15 @@
         break;
       }
       buffered += decoder.decode(readResult.value, { stream: true });
-      buffered = consumeNdjsonBuffer(buffered, false, terminalState);
+      buffered = consumeNdjsonBuffer(buffered, false, terminalState, sideState);
     }
     buffered += decoder.decode();
-    consumeNdjsonBuffer(buffered, true, terminalState);
+    consumeNdjsonBuffer(buffered, true, terminalState, sideState);
     assertTerminalStateComplete(terminalState);
-    return listErroredSides(terminalState);
+    return { erroredSides: listErroredSides(terminalState) };
   }
 
-  function consumeNdjsonBuffer(buffered, allowTrailingLine, terminalState) {
+  function consumeNdjsonBuffer(buffered, allowTrailingLine, terminalState, sideState) {
     if (typeof buffered !== "string") {
       throw new Error("ndjson buffer must be a string");
     }
@@ -215,6 +320,7 @@
       throw new Error("allowTrailingLine must be a boolean");
     }
     requireTerminalState(terminalState);
+    requireSideState(sideState);
     const lines = buffered.split("\n");
     let trailing = lines.pop();
     if (typeof trailing !== "string") {
@@ -228,13 +334,14 @@
       if (line.trim() === "") {
         return;
       }
-      applyStreamEvent(line, terminalState);
+      applyStreamEvent(line, terminalState, sideState);
     });
     return trailing;
   }
 
-  function applyStreamEvent(rawLine, terminalState) {
+  function applyStreamEvent(rawLine, terminalState, sideState) {
     requireTerminalState(terminalState);
+    requireSideState(sideState);
     let event;
     try {
       event = JSON.parse(rawLine);
@@ -245,7 +352,7 @@
       throw new Error("battleground event must be an object");
     }
     const side = requireString(event, "side", "battleground event");
-    const outputElement = resolveSideOutput(side);
+    const renderState = resolveSideState(sideState, side);
     const hasChunk = Object.prototype.hasOwnProperty.call(event, "chunk");
     const hasDone = Object.prototype.hasOwnProperty.call(event, "done");
     const hasError = Object.prototype.hasOwnProperty.call(event, "error");
@@ -253,7 +360,9 @@
       throw new Error("battleground event must include exactly one of chunk, done, or error");
     }
     if (hasChunk) {
-      appendOutputLine(outputElement, requireString(event, "chunk", "battleground chunk event"));
+      renderState.markdownText += requireString(event, "chunk", "battleground chunk event");
+      renderState.thinking = false;
+      renderSide(side, sideState);
       return;
     }
     if (hasDone) {
@@ -261,12 +370,72 @@
         throw new Error("battleground done event must set done=true");
       }
       terminalState[side] = true;
-      appendOutputLine(outputElement, "Done.");
+      renderState.thinking = false;
+      renderState.terminalText = appendTerminalText(renderState.terminalText, "Done.");
+      renderSide(side, sideState);
       return;
     }
     terminalState[side] = true;
     markSideAsErrored(terminalState, side);
-    appendOutputLine(outputElement, `Error: ${requireString(event, "error", "battleground error event")}`);
+    renderState.thinking = false;
+    renderState.terminalText = appendTerminalText(
+      renderState.terminalText,
+      `Error: ${requireString(event, "error", "battleground error event")}`
+    );
+    renderSide(side, sideState);
+  }
+
+  function appendTerminalText(existingText, newLine) {
+    if (typeof existingText !== "string") {
+      throw new Error("existing terminal text must be a string");
+    }
+    if (typeof newLine !== "string" || newLine.trim() === "") {
+      throw new Error("terminal line must be a non-empty string");
+    }
+    if (existingText === "") {
+      return newLine;
+    }
+    return `${existingText}\n${newLine}`;
+  }
+
+  function buildRequestHistoryPayload() {
+    return battlegroundHistory.map((turn, index) => {
+      const context = `battleground history turn[${index}]`;
+      const role = requireString(turn, "role", context);
+      const message = requireString(turn, "message", context);
+      if (role !== "user" && role !== "assistant") {
+        throw new Error(`${context} role must be user or assistant`);
+      }
+      return { role, message };
+    });
+  }
+
+  function appendConversationTurns(message, modelA, modelB, sideState) {
+    const assistantMessage = buildAssistantHistoryMessage(modelA, modelB, sideState);
+    battlegroundHistory.push({ role: "user", message });
+    battlegroundHistory.push({ role: "assistant", message: assistantMessage });
+  }
+
+  function buildAssistantHistoryMessage(modelA, modelB, sideState) {
+    if (typeof modelA !== "string" || modelA.trim() === "") {
+      throw new Error("assistant history modelA must be a non-empty string");
+    }
+    if (typeof modelB !== "string" || modelB.trim() === "") {
+      throw new Error("assistant history modelB must be a non-empty string");
+    }
+    const sideA = buildHistorySideText(sideState, "A");
+    const sideB = buildHistorySideText(sideState, "B");
+    return `Model A (${modelA}):\n${sideA}\n\nModel B (${modelB}):\n${sideB}`;
+  }
+
+  function buildHistorySideText(sideState, side) {
+    const state = resolveSideState(sideState, side);
+    const combined = buildCombinedSideText(state);
+    const normalized = removeCitationArtifacts(combined).trim();
+    if (normalized === "") {
+      throw new Error(`battleground side ${side} response text is empty`);
+    }
+    return normalized;
   }
 
   function createTerminalState() {
@@ -330,7 +499,9 @@
       incompleteSides.push("B");
     }
     if (incompleteSides.length > 0) {
-      throw new Error(`Battleground stream ended before terminal events for side(s): ${incompleteSides.join(", ")}.`);
+      throw new Error(
+        `Battleground stream ended before terminal events for side(s): ${incompleteSides.join(", ")}.`
+      );
     }
   }
 
@@ -342,17 +513,6 @@
       return modelBOutput;
     }
     throw new Error(`unsupported battleground side: ${side}`);
-  }
-
-  function appendOutputLine(outputElement, lineText) {
-    if (typeof lineText !== "string") {
-      throw new Error("battleground output line must be a string");
-    }
-    if (outputElement.textContent === "") {
-      outputElement.textContent = lineText;
-      return;
-    }
-    outputElement.textContent = `${outputElement.textContent}\n${lineText}`;
   }
 
   function setBattlegroundStatus(message) {
