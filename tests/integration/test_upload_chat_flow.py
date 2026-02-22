@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 import app.main as main_module
 from app.main import AppServices, create_app
 from app.services.chat import ChatResult, NO_DOCUMENT_EVIDENCE
+from app.services.chat_provider_models import ChatModelOption
 from app.services.ingest import IngestResult
 
 
@@ -25,7 +26,15 @@ class StatefulFakeChatService:
     def __init__(self, ingest_service: StatefulFakeIngestService) -> None:
         self._ingest_service = ingest_service
 
-    async def answer_question(self, question: str, history, model: str) -> ChatResult:
+    async def answer_question(
+        self,
+        question: str,
+        history,
+        backend_id: str,
+        model: str,
+    ) -> ChatResult:
+        if backend_id != "lab_vllm":
+            raise AssertionError("backend_id must be passed to chat service")
         if model != "openai/gpt-4o-mini":
             raise AssertionError("model must be passed to chat service")
         if len(history) == 0:
@@ -49,7 +58,15 @@ class StatefulFakeChatService:
             retrieved_count=1,
         )
 
-    async def stream_answer_question(self, question: str, history, model: str):
+    async def stream_answer_question(
+        self,
+        question: str,
+        history,
+        backend_id: str,
+        model: str,
+    ):
+        if backend_id != "lab_vllm":
+            raise AssertionError("backend_id must be passed to chat stream service")
         if model != "openai/gpt-4o-mini":
             raise AssertionError("model must be passed to chat stream service")
         if not self._ingest_service.has_upload:
@@ -72,6 +89,18 @@ class StatefulFakeDocumentService:
         raise AssertionError("Delete should not be called in flow test")
 
 
+class FakeChatProviderRouter:
+    def list_model_options(self) -> tuple[ChatModelOption, ...]:
+        return (
+            ChatModelOption(
+                backend_id="lab_vllm",
+                provider="openai_compatible",
+                model="openai/gpt-4o-mini",
+                label="lab_vllm (openai_compatible) · openai/gpt-4o-mini",
+            ),
+        )
+
+
 def test_upload_then_chat_returns_grounded_answer(
     required_env: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -83,7 +112,7 @@ def test_upload_then_chat_returns_grounded_answer(
         chat_service=chat_service,
         document_service=document_service,
         retrieval_service=object(),
-        chat_client=object(),
+        chat_provider_router=FakeChatProviderRouter(),
     )
     monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
     client = TestClient(create_app())
@@ -99,6 +128,7 @@ def test_upload_then_chat_returns_grounded_answer(
         json={
             "message": "What does the document say?",
             "history": [{"role": "user", "message": "Earlier message"}],
+            "backend_id": "lab_vllm",
             "model": "openai/gpt-4o-mini",
         },
     )
@@ -120,7 +150,7 @@ def test_upload_then_chat_stream_returns_answer(
         chat_service=chat_service,
         document_service=document_service,
         retrieval_service=object(),
-        chat_client=object(),
+        chat_provider_router=FakeChatProviderRouter(),
     )
     monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
     client = TestClient(create_app())
@@ -136,6 +166,7 @@ def test_upload_then_chat_stream_returns_answer(
         json={
             "message": "What does the document say?",
             "history": [{"role": "user", "message": "Earlier message"}],
+            "backend_id": "lab_vllm",
             "model": "openai/gpt-4o-mini",
         },
     )

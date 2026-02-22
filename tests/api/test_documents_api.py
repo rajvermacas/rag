@@ -15,10 +15,16 @@ class FakeIngestService:
 
 
 class FakeChatService:
-    async def answer_question(self, question: str, history, model: str):
+    async def answer_question(self, question: str, history, backend_id: str, model: str):
         raise AssertionError("Chat service should not be called in documents test")
 
-    async def stream_answer_question(self, question: str, history, model: str):
+    async def stream_answer_question(
+        self,
+        question: str,
+        history,
+        backend_id: str,
+        model: str,
+    ):
         raise AssertionError("Chat stream should not be called in documents test")
 
 
@@ -48,7 +54,7 @@ def test_list_documents_returns_all_uploaded_documents(
         chat_service=FakeChatService(),
         document_service=FakeDocumentService(),
         retrieval_service=object(),
-        chat_client=object(),
+        chat_provider_router=object(),
     )
     monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
     client = TestClient(create_app())
@@ -70,7 +76,7 @@ def test_delete_document_removes_indexed_document(
         chat_service=FakeChatService(),
         document_service=fake_document_service,
         retrieval_service=object(),
-        chat_client=object(),
+        chat_provider_router=object(),
     )
     monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
     client = TestClient(create_app())
@@ -95,7 +101,7 @@ def test_delete_document_returns_404_when_doc_missing(
         chat_service=FakeChatService(),
         document_service=FakeDocumentService(),
         retrieval_service=object(),
-        chat_client=object(),
+        chat_provider_router=object(),
     )
     monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
     client = TestClient(create_app())

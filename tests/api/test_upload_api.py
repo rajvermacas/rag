@@ -19,10 +19,16 @@ class FakeIngestService:
 
 
 class FakeChatService:
-    async def answer_question(self, question: str, history, model: str):
+    async def answer_question(self, question: str, history, backend_id: str, model: str):
         raise AssertionError("Chat service should not be called in upload test")
 
-    async def stream_answer_question(self, question: str, history, model: str):
+    async def stream_answer_question(
+        self,
+        question: str,
+        history,
+        backend_id: str,
+        model: str,
+    ):
         raise AssertionError("Chat stream should not be called in upload test")
 
 
@@ -40,7 +46,7 @@ def test_upload_txt_indexes_document(required_env: None, monkeypatch: pytest.Mon
         chat_service=FakeChatService(),
         document_service=FakeDocumentService(),
         retrieval_service=object(),
-        chat_client=object(),
+        chat_provider_router=object(),
     )
     monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
     client = TestClient(create_app())
@@ -61,7 +67,7 @@ def test_upload_returns_400_for_validation_error(
         chat_service=FakeChatService(),
         document_service=FakeDocumentService(),
         retrieval_service=object(),
-        chat_client=object(),
+        chat_provider_router=object(),
     )
     monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
     client = TestClient(create_app())

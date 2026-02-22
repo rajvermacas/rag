@@ -86,6 +86,10 @@ class ChatProviderRouter:
                 )
         return tuple(options)
 
+    def get_provider_for_backend(self, backend_id: str) -> str:
+        profile = self._resolve_profile(backend_id)
+        return profile.provider
+
     def _validate_provider_coverage(self) -> None:
         missing_providers = [
             backend_id
