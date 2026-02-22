@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 import logging
 import re
-from typing import Any, Protocol
+from typing import Any, AsyncIterator, Protocol
 
 
 logger = logging.getLogger(__name__)
@@ -26,6 +26,9 @@ class AsyncQueryEngine(Protocol):
 class QueryEngineFactory(Protocol):
     def build_query_engine(self, llm: Any) -> AsyncQueryEngine:
         """Build a query engine for the provided LLM."""
+
+    def build_streaming_query_engine(self, llm: Any) -> AsyncQueryEngine:
+        """Build a streaming-enabled query engine for the provided LLM."""
 
 
 @dataclass(frozen=True)
@@ -78,6 +81,35 @@ class QueryEngineService:
             result.retrieved_count,
         )
         return result
+
+    async def stream_answer_question(
+        self,
+        question: str,
+        history: list[ConversationTurn],
+        backend_id: str,
+        model: str,
+    ) -> AsyncIterator[str]:
+        normalized_question = _require_non_empty(question, "question")
+        normalized_backend_id = _require_non_empty(backend_id, "backend_id")
+        normalized_model = _require_non_empty(model, "model")
+        _validate_history(history)
+        llm = self._llm_registry.get_llm(normalized_backend_id, normalized_model)
+        engine = self._engine_factory.build_streaming_query_engine(llm)
+        query_payload = _build_query(normalized_question, history)
+        response = await engine.aquery(query_payload)
+        logger.info(
+            "query_engine_stream_started backend_id=%s model=%s",
+            normalized_backend_id,
+            normalized_model,
+        )
+        async for chunk in _iter_response_chunks(response):
+            if chunk != "":
+                yield chunk
+        logger.info(
+            "query_engine_stream_completed backend_id=%s model=%s",
+            normalized_backend_id,
+            normalized_model,
+        )
 
 
 def _build_query(question: str, history: list[ConversationTurn]) -> str:
@@ -136,3 +168,13 @@ def _require_non_empty(value: str, field_name: str) -> str:
     if normalized == "":
         raise ValueError(f"{field_name} must not be empty")
     return normalized
+
+
+async def _iter_response_chunks(response: Any) -> AsyncIterator[str]:
+    if not hasattr(response, "async_response_gen"):
+        raise ValueError("streaming query response must provide async_response_gen")
+    generator = response.async_response_gen()
+    async for chunk in generator:
+        if not isinstance(chunk, str):
+            raise ValueError("streaming query chunk must be a string")
+        yield chunk

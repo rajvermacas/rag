@@ -16,10 +16,9 @@ def required_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENROUTER_EMBED_MODEL", "openrouter/test-embed")
     monkeypatch.setenv("CHAT_BACKEND_IDS", "lab_vllm,azure_prod")
 
-    monkeypatch.setenv("CHAT_BACKEND_LAB_VLLM_PROVIDER", "openai_compatible")
+    monkeypatch.setenv("CHAT_BACKEND_LAB_VLLM_PROVIDER", "openrouter")
     monkeypatch.setenv("CHAT_BACKEND_LAB_VLLM_MODELS", "openai/gpt-4o-mini,anthropic/claude-3.5-sonnet")
     monkeypatch.setenv("CHAT_BACKEND_LAB_VLLM_API_KEY", "test-chat-key")
-    monkeypatch.setenv("CHAT_BACKEND_LAB_VLLM_BASE_URL", "https://openrouter.ai/api/v1")
 
     monkeypatch.setenv("CHAT_BACKEND_AZURE_PROD_PROVIDER", "azure_openai")
     monkeypatch.setenv("CHAT_BACKEND_AZURE_PROD_MODELS", "gpt-4o-mini")
