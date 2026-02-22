@@ -57,5 +57,7 @@ There are couple of things which needs to be fixed/implemented:
 ----------------------------
 
 There are couple of things which needs to be fixed/implemented:
-1. On the Chat page, user message should appear on right and assistant message should appear on left. Right now both the messages start appear on the left side.
-2. 
+1. On the Chat page and battlegroup page, user message should appear on right and assistant message should appear on left. Right now both the messages start appear on the left side.
+
+There are couple of things which needs to be fixed/implemented:
+1. The chat section should also have a drop down for model selection

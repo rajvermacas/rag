@@ -318,9 +318,9 @@
     const escapedText = escapeHtml(entry.text).replace(/\n/g, "<br />");
     return `
       <article class="mb-3 flex justify-end">
-        <div class="max-w-[95%] rounded-xl border border-zinc-900 bg-zinc-900 px-3 py-2 text-sm text-white">
-          <p class="text-[11px] font-semibold uppercase tracking-wide text-zinc-300">You</p>
-          <p class="mt-1 leading-relaxed">${escapedText}</p>
+        <div class="max-w-[85%] rounded-xl border border-zinc-300 bg-zinc-200/90 p-3">
+          <p class="text-right text-xs font-semibold uppercase tracking-wide text-zinc-600">You</p>
+          <p class="mt-1 text-right text-sm text-zinc-900">${escapedText}</p>
         </div>
       </article>
     `;
@@ -331,13 +331,13 @@
     const cleanedText = removeCitationArtifacts(combinedText);
     const markdownHtml = cleanedText.trim() === "" ? "" : renderMarkdown(cleanedText);
     const thinkingHtml = entry.thinking
-      ? "<p class=\"mt-2 text-sm text-zinc-500 animate-pulse\">Thinking...</p>"
+      ? "<p class=\"mt-2 text-sm text-zinc-600 animate-pulse\">Thinking...</p>"
       : "";
     return `
       <article class="mb-3 flex justify-start">
-        <div class="max-w-[95%] rounded-xl border border-zinc-200 bg-zinc-100 px-3 py-2 text-sm text-zinc-800">
-          <p class="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Model</p>
-          <div class="markdown-body mt-1">${markdownHtml}</div>
+        <div class="w-full max-w-full rounded-xl border border-red-200 bg-white p-3 shadow-sm">
+          <p class="text-xs font-semibold uppercase tracking-wide text-red-600">Model</p>
+          <div class="markdown-body mt-2 text-sm text-zinc-800">${markdownHtml}</div>
           ${thinkingHtml}
         </div>
       </article>

@@ -109,6 +109,10 @@ def test_battleground_script_loads_models_renders_markdown_supports_follow_ups_a
     assert "Which answer is better?" in payload["modelBHtml"]
     assert "Can you follow up with examples?" in payload["modelAHtml"]
     assert "Can you follow up with examples?" in payload["modelBHtml"]
+    assert "max-w-[85%] rounded-xl border border-zinc-300 bg-zinc-200/90 p-3" in payload["modelAHtml"]
+    assert "max-w-[85%] rounded-xl border border-zinc-300 bg-zinc-200/90 p-3" in payload["modelBHtml"]
+    assert "w-full max-w-full rounded-xl border border-red-200 bg-white p-3 shadow-sm" in payload["modelAHtml"]
+    assert "w-full max-w-full rounded-xl border border-red-200 bg-white p-3 shadow-sm" in payload["modelBHtml"]
     assert payload["modelAHtml"].count("<strong>hi</strong>") == 2
     assert payload["modelBHtml"].count("<em>hi</em>") == 2
     assert payload["modelAHtml"].count("Done.") == 2

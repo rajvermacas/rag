@@ -220,7 +220,8 @@ def test_index_page_has_chat_and_battleground_scaffolds(
     assert 'id="battleground-comparison-panel"' in html
     assert "Ask a question for both models..." in html
     assert "Comparison Output" not in html
-    assert "md:grid-cols-[minmax(18rem,20rem)_minmax(0,1.8fr)]" in html
+    assert "hidden grid gap-6 rounded-2xl border border-zinc-200 bg-white p-4 shadow-xl shadow-zinc-300/30 md:grid-cols-[minmax(20rem,24rem)_1fr] md:p-6" in html
+    assert "xl:grid-cols-2" in html
     assert 'id="documents-list"' in html
     assert 'id="refresh-documents"' in html
     assert 'id="chat-history-select"' in html
