@@ -62,6 +62,10 @@ const windowListeners = new Map();
 const fetchCalls = [];
 const encoder = new TextEncoder();
 let pendingMessage = "";
+let releaseStreamCompletion = null;
+const streamCompletion = new Promise((resolve) => {
+  releaseStreamCompletion = resolve;
+});
 
 function createElement(id, tagName = "div") {
   const listeners = new Map();
@@ -152,15 +156,22 @@ globalThis.fetch = async (url, options = {}) => {
   }
   if (url === "/documents") return { ok: true, json: async () => ({ documents: [] }) };
   if (url === "/chat/stream") {
-    let emitted = false;
+    let readCount = 0;
     return {
       ok: true,
       body: {
         getReader: () => ({
           read: async () => {
-            if (emitted) return { value: undefined, done: true };
-            emitted = true;
-            return { value: encoder.encode(__STREAM_CHUNK__), done: false };
+            if (readCount === 0) {
+              readCount += 1;
+              return { value: encoder.encode(__STREAM_CHUNK__), done: false };
+            }
+            if (readCount === 1) {
+              readCount += 1;
+              await streamCompletion;
+              return { value: undefined, done: true };
+            }
+            throw new Error("unexpected chat stream read invocation");
           },
         }),
       },
@@ -191,7 +202,11 @@ const chatModelOptionValues = elements["chat-model-select"].children.map((option
 const chatModelOptionLabels = elements["chat-model-select"].children.map((option) => option.textContent);
 elements["chat-model-select"].value = "lab_vllm||openai/gpt-4o-mini";
 pendingMessage = "What is revenue?";
-await elements["chat-form"].submit();
+const submitPromise = elements["chat-form"].submit();
+await Promise.resolve();
+const chatButtonDisabledWhileStreamCompleting = elements["chat-button"].disabled;
+releaseStreamCompletion();
+await submitPromise;
 const streamRequest = fetchCalls.find((call) => call.url === "/chat/stream");
 const postSubmitPayload = JSON.parse(localStorageRecords.get("rag-chat-sessions"));
 const postSubmitSession = postSubmitPayload.sessions[0];
@@ -207,6 +222,7 @@ process.stdout.write(JSON.stringify({
   chatModelOptionValues,
   chatModelOptionLabels,
   streamRequestBody: streamRequest ? streamRequest.body : null,
+  chatButtonDisabledWhileStreamCompleting,
   lastAssistantRole: lastMessage.role,
   lastAssistantMessageText: lastMessage.text
 }));
@@ -380,6 +396,7 @@ def test_chat_script_keeps_single_session_when_new_chat_clicked_from_pristine_gr
         "backend_id": "lab_vllm",
         "model": "openai/gpt-4o-mini",
     }
+    assert payload["chatButtonDisabledWhileStreamCompleting"] is False
 
 
 def test_chat_script_replaces_citation_only_stream_with_visible_assistant_message(

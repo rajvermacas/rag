@@ -120,6 +120,7 @@ def test_battleground_script_loads_models_renders_markdown_supports_follow_ups_a
         == "Model B · lab_vllm (openai_compatible) · anthropic/claude-3.5-sonnet"
     )
     read_snapshots = payload["readSnapshots"]
+    assert read_snapshots[0]["inputValue"] == ""
     assert "Thinking..." in read_snapshots[0]["modelAHtml"]
     assert "Thinking..." in read_snapshots[0]["modelBHtml"]
     assert "Which answer is better?" in payload["modelAHtml"]

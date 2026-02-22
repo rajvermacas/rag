@@ -215,6 +215,7 @@
       setBattlegroundStatus("Comparing models...");
       const sideState = createSideState(message);
       renderThinkingState();
+      battlegroundMessage.value = "";
       const result = await streamComparison(
         {
           message,
@@ -228,7 +229,6 @@
       );
       appendConversationTurns(message, modelA.label, modelB.label, sideState);
       setBattlegroundStatus(buildCompletionStatus(result.erroredSides));
-      battlegroundMessage.value = "";
       logger.info(
         "battleground_compare_request_completed history_turns=%s",
         historyPayload.length + 2

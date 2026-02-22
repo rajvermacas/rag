@@ -83,7 +83,6 @@
 
   chatForm.addEventListener("submit", async (event) => {
     event.preventDefault();
-    chatButton.disabled = true;
     try {
       const formData = new FormData(chatForm);
       const rawMessage = formData.get("message");
@@ -100,6 +99,7 @@
       conversationHistory.push({ role: "user", message });
       persistChatState();
       chatForm.reset();
+      syncChatSubmitEnabledState();
 
       const thinkingMessageId = appendThinkingMessage();
       try {
@@ -117,8 +117,6 @@
       }
     } catch (error) {
       appendSystemError(requireErrorMessage(error));
-    } finally {
-      syncChatSubmitEnabledState();
     }
   });
 

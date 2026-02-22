@@ -191,6 +191,7 @@ globalThis.fetch = async (url, options = {}) => {
               modelB: elements["battleground-model-b-output"].textContent,
               modelAHtml: elements["battleground-model-a-output"].innerHTML,
               modelBHtml: elements["battleground-model-b-output"].innerHTML,
+              inputValue: elements["battleground-message"].value,
               status: elements["battleground-status"].textContent,
             });
             if (chunkIndex >= streamChunks.length) {
