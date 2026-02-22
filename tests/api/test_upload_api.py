@@ -19,8 +19,11 @@ class FakeIngestService:
 
 
 class FakeChatService:
-    async def answer_question(self, question: str, history):
+    async def answer_question(self, question: str, history, model: str):
         raise AssertionError("Chat service should not be called in upload test")
+
+    async def stream_answer_question(self, question: str, history, model: str):
+        raise AssertionError("Chat stream should not be called in upload test")
 
 
 class FakeDocumentService:

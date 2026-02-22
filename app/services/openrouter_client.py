@@ -47,10 +47,24 @@ class OpenRouterClient:
     async def generate_chat_response(
         self, system_prompt: str, user_prompt: str
     ) -> str:
+        return await self.generate_chat_response_with_model(
+            self._chat_model,
+            system_prompt,
+            user_prompt,
+        )
+
+    async def generate_chat_response_with_model(
+        self,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> str:
+        if model.strip() == "":
+            raise ValueError("model must not be empty")
         _validate_prompt_inputs(system_prompt, user_prompt)
 
-        logger.info("openrouter_chat_started")
-        payload = _build_chat_payload(self._chat_model, system_prompt, user_prompt, stream=False)
+        logger.info("openrouter_chat_started model=%s", model)
+        payload = _build_chat_payload(model, system_prompt, user_prompt, stream=False)
         response = await self._post_json("/chat/completions", payload)
         if response.status_code != 200:
             raise RuntimeError(
@@ -58,7 +72,7 @@ class OpenRouterClient:
                 f"{response.status_code} {response.text}"
             )
         content = _extract_chat_content(response.json())
-        logger.info("openrouter_chat_completed response_length=%s", len(content))
+        logger.info("openrouter_chat_completed model=%s response_length=%s", model, len(content))
         return content
 
     async def stream_chat_response(

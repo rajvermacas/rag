@@ -20,7 +20,7 @@ class FakeIngestService:
 
 
 class FakeChatService:
-    async def answer_question(self, question: str, history) -> ChatResult:
+    async def answer_question(self, question: str, history, model: str) -> ChatResult:
         return ChatResult(
             answer="ok",
             citations=[],
@@ -28,7 +28,7 @@ class FakeChatService:
             retrieved_count=0,
         )
 
-    async def stream_answer_question(self, question: str, history):
+    async def stream_answer_question(self, question: str, history, model: str):
         yield "ok"
 
 
@@ -79,7 +79,7 @@ function createElement(id, tagName = "div") {
 const ids = [
   "upload-form","upload-button","upload-loader","upload-button-label","upload-status",
   "refresh-documents","documents-list","documents-status","chat-form","chat-button",
-  "chat-window","chat-history-select","clear-chat"
+  "chat-window","chat-model-select","chat-history-select","clear-chat"
 ];
 const elements = Object.fromEntries(ids.map((id) => [id, createElement(id)]));
 globalThis.window = globalThis;
@@ -94,6 +94,12 @@ globalThis.localStorage = {
 };
 globalThis.crypto = { randomUUID: (() => { let n = 0; return () => `uuid-${++n}`; })() };
 globalThis.fetch = async (url) => {
+  if (url === "/models/chat") {
+    return {
+      ok: true,
+      json: async () => ({ models: ["openai/gpt-4o-mini", "anthropic/claude-3.5-sonnet"] }),
+    };
+  }
   if (url === "/documents") return { ok: true, json: async () => ({ documents: [] }) };
   throw new Error(`unexpected fetch url: ${url}`);
 };
@@ -227,6 +233,7 @@ def test_index_page_has_chat_and_battleground_scaffolds(
     assert 'id="documents-list"' in html
     assert 'id="refresh-documents"' in html
     assert 'id="chat-history-select"' in html
+    assert 'id="chat-model-select"' in html
     assert 'id="clear-chat"' in html
     assert "New Chat" in html
     assert '<script src="/static/js/common.js"></script>' in html

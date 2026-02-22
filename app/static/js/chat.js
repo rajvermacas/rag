@@ -8,6 +8,7 @@
   const { requireElement, requireString, requireNumber, requireErrorMessage, renderMarkdown, removeCitationArtifacts, escapeHtml } = window.RagCommon;
   const CHAT_STORAGE_KEY = "rag-chat-sessions";
   const DEFAULT_CHAT_GREETING = "Hello! How can I assist you today?";
+  const CHAT_MODELS_ENDPOINT = "/models/chat";
 
   const uploadForm = requireElement("upload-form");
   const uploadButton = requireElement("upload-button");
@@ -20,12 +21,14 @@
   const chatForm = requireElement("chat-form");
   const chatButton = requireElement("chat-button");
   const chatWindow = requireElement("chat-window");
+  const chatModelSelect = requireElement("chat-model-select");
   const chatHistorySelect = requireElement("chat-history-select");
   const clearChatButton = requireElement("clear-chat");
 
   const chatSessions = [];
   let activeSessionId = "";
   let conversationHistory = [];
+  syncChatSubmitEnabledState();
 
   uploadForm.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -70,6 +73,10 @@
     persistChatState();
   });
 
+  chatModelSelect.addEventListener("change", () => {
+    syncChatSubmitEnabledState();
+  });
+
   chatForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     chatButton.disabled = true;
@@ -83,6 +90,7 @@
       if (message === "") {
         return;
       }
+      const model = readSelectedChatModel();
 
       appendUserMessage(message);
       conversationHistory.push({ role: "user", message });
@@ -91,22 +99,113 @@
 
       const thinkingMessageId = appendThinkingMessage();
       try {
-        const answer = await streamAssistantResponse(message, conversationHistory, thinkingMessageId);
+        const answer = await streamAssistantResponse(
+          message,
+          conversationHistory,
+          model,
+          thinkingMessageId
+        );
         conversationHistory.push({ role: "assistant", message: answer });
         persistChatState();
       } catch (error) {
         removeMessageById(thinkingMessageId);
         appendSystemError(requireErrorMessage(error));
       }
+    } catch (error) {
+      appendSystemError(requireErrorMessage(error));
     } finally {
-      chatButton.disabled = false;
+      syncChatSubmitEnabledState();
     }
   });
 
   window.addEventListener("load", async () => {
     initializeChatSessions();
+    await loadChatModels();
     await loadDocuments();
   });
+
+  function syncChatSubmitEnabledState() {
+    if (typeof chatModelSelect.value !== "string") {
+      throw new Error("chat model select value must be a string");
+    }
+    chatButton.disabled = chatModelSelect.value.trim() === "";
+  }
+
+  function readSelectedChatModel() {
+    if (typeof chatModelSelect.value !== "string") {
+      throw new Error("chat model select value must be a string");
+    }
+    const normalizedModel = chatModelSelect.value.trim();
+    if (normalizedModel === "") {
+      throw new Error("chat model must be selected");
+    }
+    return normalizedModel;
+  }
+
+  async function loadChatModels() {
+    const response = await fetch(CHAT_MODELS_ENDPOINT);
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(requireString(payload, "detail", "chat model list error"));
+    }
+    if (!("models" in payload) || !Array.isArray(payload.models)) {
+      throw new Error("missing 'models' array in chat model list response");
+    }
+    renderChatModelOptions(payload.models);
+  }
+
+  function renderChatModelOptions(models) {
+    validateChatModelList(models);
+    chatModelSelect.innerHTML = "";
+    chatModelSelect.append(createChatModelPlaceholderOption());
+    models.forEach((model, index) => {
+      chatModelSelect.append(createChatModelOption(model, index));
+    });
+    chatModelSelect.value = "";
+    syncChatSubmitEnabledState();
+  }
+
+  function validateChatModelList(models) {
+    if (models.length === 0) {
+      throw new Error("chat model list must include at least one model");
+    }
+    const seen = new Set();
+    models.forEach((model, index) => {
+      if (typeof model !== "string") {
+        throw new Error(`chat model id must be a string at models[${index}]`);
+      }
+      const normalizedModel = model.trim();
+      if (normalizedModel === "") {
+        throw new Error(`chat model id must not be empty at models[${index}]`);
+      }
+      if (seen.has(normalizedModel)) {
+        throw new Error(`chat model list contains duplicate model id: ${normalizedModel}`);
+      }
+      seen.add(normalizedModel);
+    });
+  }
+
+  function createChatModelPlaceholderOption() {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "Select model";
+    option.selected = true;
+    return option;
+  }
+
+  function createChatModelOption(model, index) {
+    if (typeof model !== "string") {
+      throw new Error(`chat model id must be a string at models[${index}]`);
+    }
+    const normalizedModel = model.trim();
+    if (normalizedModel === "") {
+      throw new Error(`chat model id must not be empty at models[${index}]`);
+    }
+    const option = document.createElement("option");
+    option.value = normalizedModel;
+    option.textContent = normalizedModel;
+    return option;
+  }
 
   function setUploadButtonLoadingState(isLoading) {
     if (typeof isLoading !== "boolean") {
@@ -466,11 +565,11 @@
     return row;
   }
 
-  async function streamAssistantResponse(message, history, thinkingMessageId) {
+  async function streamAssistantResponse(message, history, model, thinkingMessageId) {
     const response = await fetch("/chat/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, history }),
+      body: JSON.stringify({ message, history, model }),
     });
     if (!response.ok) {
       const payload = await response.json();

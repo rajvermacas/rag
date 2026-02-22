@@ -25,7 +25,9 @@ class StatefulFakeChatService:
     def __init__(self, ingest_service: StatefulFakeIngestService) -> None:
         self._ingest_service = ingest_service
 
-    async def answer_question(self, question: str, history) -> ChatResult:
+    async def answer_question(self, question: str, history, model: str) -> ChatResult:
+        if model != "openai/gpt-4o-mini":
+            raise AssertionError("model must be passed to chat service")
         if len(history) == 0:
             raise AssertionError("history must be passed to chat service")
         if not self._ingest_service.has_upload:
@@ -47,7 +49,9 @@ class StatefulFakeChatService:
             retrieved_count=1,
         )
 
-    async def stream_answer_question(self, question: str, history):
+    async def stream_answer_question(self, question: str, history, model: str):
+        if model != "openai/gpt-4o-mini":
+            raise AssertionError("model must be passed to chat stream service")
         if not self._ingest_service.has_upload:
             yield f"{NO_DOCUMENT_EVIDENCE}"
             return
@@ -95,6 +99,7 @@ def test_upload_then_chat_returns_grounded_answer(
         json={
             "message": "What does the document say?",
             "history": [{"role": "user", "message": "Earlier message"}],
+            "model": "openai/gpt-4o-mini",
         },
     )
     assert chat_response.status_code == 200
@@ -131,6 +136,7 @@ def test_upload_then_chat_stream_returns_answer(
         json={
             "message": "What does the document say?",
             "history": [{"role": "user", "message": "Earlier message"}],
+            "model": "openai/gpt-4o-mini",
         },
     )
     assert stream_response.status_code == 200

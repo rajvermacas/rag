@@ -43,6 +43,12 @@ class ChatHistoryTurn(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     history: list[ChatHistoryTurn]
+    model: str
+
+    @field_validator("model")
+    @classmethod
+    def validate_model(cls, value: str) -> str:
+        return _require_non_empty_payload_value(value, "model")
 
 
 class ChatResponse(BaseModel):
@@ -75,6 +81,10 @@ class BattlegroundCompareRequest(BaseModel):
 
 
 class BattlegroundModelsResponse(BaseModel):
+    models: list[str]
+
+
+class ChatModelsResponse(BaseModel):
     models: list[str]
 
 
@@ -181,7 +191,7 @@ def _register_routes(app: FastAPI, services: AppServices, settings: Settings) ->
     _register_health_route(app, settings)
     _register_upload_route(app, services)
     _register_documents_routes(app, services)
-    _register_chat_routes(app, services)
+    _register_chat_routes(app, services, settings)
     _register_battleground_routes(app, services, settings)
 
 
@@ -320,17 +330,38 @@ def _register_documents_routes(app: FastAPI, services: AppServices) -> None:
         return DeleteDocumentResponse(doc_id=doc_id, chunks_deleted=chunks_deleted)
 
 
-def _register_chat_routes(app: FastAPI, services: AppServices) -> None:
+def _register_chat_routes(
+    app: FastAPI,
+    services: AppServices,
+    settings: Settings,
+) -> None:
+    @app.get("/models/chat")
+    async def list_chat_models() -> ChatModelsResponse:
+        logger.info(
+            "chat_models_list_requested model_count=%s",
+            len(settings.openrouter_battleground_models),
+        )
+        return ChatModelsResponse(models=list(settings.openrouter_battleground_models))
+
     @app.post("/chat")
     async def chat(payload: ChatRequest) -> ChatResponse:
-        logger.info(
-            "chat_endpoint_called message_length=%s history_turns=%s",
-            len(payload.message),
-            len(payload.history),
-        )
-        history = _to_conversation_history(payload.history)
         try:
-            result = await services.chat_service.answer_question(payload.message, history)
+            selected_model = _require_allowed_chat_model(
+                payload.model,
+                settings.openrouter_battleground_models,
+            )
+            logger.info(
+                "chat_endpoint_called message_length=%s history_turns=%s model=%s",
+                len(payload.message),
+                len(payload.history),
+                selected_model,
+            )
+            history = _to_conversation_history(payload.history)
+            result = await services.chat_service.answer_question(
+                payload.message,
+                history,
+                selected_model,
+            )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return ChatResponse(
@@ -342,15 +373,24 @@ def _register_chat_routes(app: FastAPI, services: AppServices) -> None:
 
     @app.post("/chat/stream")
     async def chat_stream(payload: ChatRequest) -> StreamingResponse:
-        logger.info(
-            "chat_stream_endpoint_called message_length=%s history_turns=%s",
-            len(payload.message),
-            len(payload.history),
-        )
-        history = _to_conversation_history(payload.history)
         try:
+            selected_model = _require_allowed_chat_model(
+                payload.model,
+                settings.openrouter_battleground_models,
+            )
+            logger.info(
+                "chat_stream_endpoint_called message_length=%s history_turns=%s model=%s",
+                len(payload.message),
+                len(payload.history),
+                selected_model,
+            )
+            history = _to_conversation_history(payload.history)
             stream = await _resolve_chat_stream(
-                services.chat_service.stream_answer_question(payload.message, history)
+                services.chat_service.stream_answer_question(
+                    payload.message,
+                    history,
+                    selected_model,
+                )
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -401,6 +441,15 @@ def _register_battleground_routes(
 
 def _to_conversation_history(history: list[ChatHistoryTurn]) -> list[ConversationTurn]:
     return [ConversationTurn(role=turn.role, message=turn.message) for turn in history]
+
+
+def _require_allowed_chat_model(model: str, allowed_models: tuple[str, ...]) -> str:
+    normalized_model = model.strip()
+    if normalized_model == "":
+        raise ValueError("model must not be empty")
+    if normalized_model not in allowed_models:
+        raise ValueError("model is not allowed")
+    return normalized_model
 
 
 async def _stream_chat_chunks(stream: AsyncIterator[str]) -> AsyncIterator[str]:

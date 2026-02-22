@@ -26,10 +26,26 @@ class ChatClient(Protocol):
     async def generate_chat_response(self, system_prompt: str, user_prompt: str) -> str:
         """Generate a chat response from OpenRouter."""
 
+    async def generate_chat_response_with_model(
+        self,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> str:
+        """Generate a chat response with an explicit model override."""
+
     async def stream_chat_response(
         self, system_prompt: str, user_prompt: str
     ) -> AsyncIterator[str]:
         """Stream a chat response from OpenRouter."""
+
+    async def stream_chat_response_with_model(
+        self,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> AsyncIterator[str]:
+        """Stream a chat response with an explicit model override."""
 
 
 class DocumentService(Protocol):
@@ -64,22 +80,30 @@ class ChatService:
         self._chat_client = chat_client
         self._document_service = document_service
 
-    async def answer_question(self, question: str, history: list[ConversationTurn]) -> ChatResult:
+    async def answer_question(
+        self,
+        question: str,
+        history: list[ConversationTurn],
+        model: str,
+    ) -> ChatResult:
         if question.strip() == "":
             raise ValueError("question must not be empty")
+        normalized_model = _require_non_empty_model_id(model)
         _validate_history(history)
         documents = self._document_service.list_documents()
         logger.info(
-            "chat_answer_started question_length=%s history_turns=%s available_documents=%s",
+            "chat_answer_started question_length=%s history_turns=%s available_documents=%s model=%s",
             len(question),
             len(history),
             len(documents),
+            normalized_model,
         )
         if _is_document_inventory_question(question):
             answer = _build_document_inventory_answer(documents)
             logger.info(
-                "chat_answer_completed_inventory_request document_count=%s",
+                "chat_answer_completed_inventory_request document_count=%s model=%s",
                 len(documents),
+                normalized_model,
             )
             return ChatResult(
                 answer=answer,
@@ -94,14 +118,19 @@ class ChatService:
 
         system_prompt = _build_system_prompt(has_document_evidence)
         user_prompt = _build_user_prompt(question, history, retrieved_chunks, documents)
-        raw_answer = await self._chat_client.generate_chat_response(system_prompt, user_prompt)
+        raw_answer = await self._chat_client.generate_chat_response_with_model(
+            normalized_model,
+            system_prompt,
+            user_prompt,
+        )
         answer = _remove_inline_citations(raw_answer)
 
         logger.info(
-            "chat_answer_completed grounded=%s retrieved_count=%s history_turns=%s",
+            "chat_answer_completed grounded=%s retrieved_count=%s history_turns=%s model=%s",
             has_document_evidence,
             len(retrieved_chunks),
             len(history),
+            normalized_model,
         )
         return ChatResult(
             answer=answer,
@@ -111,21 +140,30 @@ class ChatService:
         )
 
     async def stream_answer_question(
-        self, question: str, history: list[ConversationTurn]
+        self,
+        question: str,
+        history: list[ConversationTurn],
+        model: str,
     ) -> AsyncIterator[str]:
         if question.strip() == "":
             raise ValueError("question must not be empty")
+        normalized_model = _require_non_empty_model_id(model)
         _validate_history(history)
         documents = self._document_service.list_documents()
         logger.info(
-            "chat_stream_started question_length=%s history_turns=%s available_documents=%s",
+            "chat_stream_started question_length=%s history_turns=%s available_documents=%s model=%s",
             len(question),
             len(history),
             len(documents),
+            normalized_model,
         )
         if _is_document_inventory_question(question):
             answer = _build_document_inventory_answer(documents)
-            logger.info("chat_stream_completed_inventory_request document_count=%s", len(documents))
+            logger.info(
+                "chat_stream_completed_inventory_request document_count=%s model=%s",
+                len(documents),
+                normalized_model,
+            )
             return _single_chunk_stream(answer)
 
         retrieval_query = _build_retrieval_query(question, history)
@@ -133,7 +171,11 @@ class ChatService:
         has_document_evidence = len(retrieved_chunks) > 0
         system_prompt = _build_system_prompt(has_document_evidence)
         user_prompt = _build_user_prompt(question, history, retrieved_chunks, documents)
-        return self._chat_client.stream_chat_response(system_prompt, user_prompt)
+        return self._chat_client.stream_chat_response_with_model(
+            normalized_model,
+            system_prompt,
+            user_prompt,
+        )
 
     async def _retrieve_chunks_or_empty(self, question: str) -> list[IndexedChunk]:
         try:
@@ -154,6 +196,13 @@ def _validate_history(history: list[ConversationTurn]) -> None:
             raise ValueError("history role must be either 'user' or 'assistant'")
         if turn.message.strip() == "":
             raise ValueError("history message must not be empty")
+
+
+def _require_non_empty_model_id(model: str) -> str:
+    normalized_model = model.strip()
+    if normalized_model == "":
+        raise ValueError("model must not be empty")
+    return normalized_model
 
 
 def _build_retrieval_query(question: str, history: list[ConversationTurn]) -> str:

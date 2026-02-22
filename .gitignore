@@ -43,3 +43,5 @@ chroma/
 
 # Local git worktrees
 .worktrees/
+
+.dev-resources/images

@@ -23,7 +23,7 @@ class FakeIngestService:
 
 
 class FakeChatService:
-    async def answer_question(self, question: str, history) -> ChatResult:
+    async def answer_question(self, question: str, history, model: str) -> ChatResult:
         return ChatResult(
             answer="ok",
             citations=[],
@@ -31,7 +31,7 @@ class FakeChatService:
             retrieved_count=0,
         )
 
-    async def stream_answer_question(self, question: str, history):
+    async def stream_answer_question(self, question: str, history, model: str):
         yield "ok"
 
 

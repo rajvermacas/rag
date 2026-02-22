@@ -15,9 +15,11 @@ class FakeIngestService:
 
 
 class FakeChatService:
-    async def answer_question(self, question: str, history) -> ChatResult:
+    async def answer_question(self, question: str, history, model: str) -> ChatResult:
         if len(history) == 0:
             raise AssertionError("history must be passed to chat service")
+        if model != "openai/gpt-4o-mini":
+            raise AssertionError("model must be passed to chat service")
         if question == "unknown":
             return ChatResult(
                 answer=(
@@ -37,9 +39,11 @@ class FakeChatService:
             retrieved_count=1,
         )
 
-    async def stream_answer_question(self, question: str, history):
+    async def stream_answer_question(self, question: str, history, model: str):
         if len(history) == 0:
             raise AssertionError("history must be passed to chat stream service")
+        if model != "openai/gpt-4o-mini":
+            raise AssertionError("model must be passed to chat stream service")
         if question == "What is revenue?":
             yield "Revenue "
             yield "is 20."
@@ -73,6 +77,7 @@ def test_chat_returns_unknown_when_no_evidence(
         json={
             "message": "unknown",
             "history": [{"role": "user", "message": "Earlier message"}],
+            "model": "openai/gpt-4o-mini",
         },
     )
 
@@ -98,6 +103,7 @@ def test_chat_returns_grounded_answer(required_env: None, monkeypatch: pytest.Mo
         json={
             "message": "What is revenue?",
             "history": [{"role": "user", "message": "Earlier message"}],
+            "model": "openai/gpt-4o-mini",
         },
     )
 
@@ -126,6 +132,7 @@ def test_chat_stream_returns_chunked_answer(
         json={
             "message": "What is revenue?",
             "history": [{"role": "user", "message": "Earlier message"}],
+            "model": "openai/gpt-4o-mini",
         },
     )
 
@@ -144,6 +151,76 @@ def test_chat_requires_history_field(required_env: None, monkeypatch: pytest.Mon
     monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
     client = TestClient(create_app())
 
-    response = client.post("/chat", json={"message": "What is revenue?"})
+    response = client.post(
+        "/chat",
+        json={"message": "What is revenue?", "model": "openai/gpt-4o-mini"},
+    )
 
     assert response.status_code == 422
+
+
+def test_chat_requires_model_field(required_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_services = AppServices(
+        ingest_service=FakeIngestService(),
+        chat_service=FakeChatService(),
+        document_service=FakeDocumentService(),
+        retrieval_service=object(),
+        chat_client=object(),
+    )
+    monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/chat",
+        json={
+            "message": "What is revenue?",
+            "history": [{"role": "user", "message": "Earlier message"}],
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_chat_rejects_disallowed_model(required_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_services = AppServices(
+        ingest_service=FakeIngestService(),
+        chat_service=FakeChatService(),
+        document_service=FakeDocumentService(),
+        retrieval_service=object(),
+        chat_client=object(),
+    )
+    monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/chat",
+        json={
+            "message": "What is revenue?",
+            "history": [{"role": "user", "message": "Earlier message"}],
+            "model": "meta/not-allowed",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "model is not allowed"}
+
+
+def test_get_chat_models_returns_allowlist(
+    required_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_services = AppServices(
+        ingest_service=FakeIngestService(),
+        chat_service=FakeChatService(),
+        document_service=FakeDocumentService(),
+        retrieval_service=object(),
+        chat_client=object(),
+    )
+    monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
+    client = TestClient(create_app())
+
+    response = client.get("/models/chat")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "models": ["openai/gpt-4o-mini", "anthropic/claude-3.5-sonnet"]
+    }

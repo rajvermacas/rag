@@ -152,6 +152,39 @@ def test_stream_chat_with_model_override_uses_given_model(
     assert captured_models == ["custom/model"]
 
 
+def test_chat_with_model_override_uses_given_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured_models: list[str] = []
+    response = FakeResponse(
+        status_code=200,
+        payload={"choices": [{"message": {"content": "ok"}}]},
+    )
+
+    async def fake_post_json(self, path: str, payload: dict) -> FakeResponse:
+        if path != "/chat/completions":
+            raise AssertionError("unexpected path")
+        captured_models.append(payload["model"])
+        return response
+
+    monkeypatch.setattr(OpenRouterClient, "_post_json", fake_post_json)
+    client = OpenRouterClient(
+        api_key="k", embed_model="openrouter/embed", chat_model="openrouter/default-chat"
+    )
+
+    result = asyncio.run(client.generate_chat_response_with_model("custom/model", "system", "user"))
+
+    assert result == "ok"
+    assert captured_models == ["custom/model"]
+
+
+def test_chat_with_model_override_rejects_empty_model() -> None:
+    client = OpenRouterClient(
+        api_key="k", embed_model="openrouter/embed", chat_model="openrouter/default-chat"
+    )
+
+    with pytest.raises(ValueError, match="model must not be empty"):
+        asyncio.run(client.generate_chat_response_with_model("   ", "system", "user"))
+
+
 def test_stream_chat_with_model_override_rejects_empty_model() -> None:
     client = OpenRouterClient(
         api_key="k", embed_model="openrouter/embed", chat_model="openrouter/default-chat"

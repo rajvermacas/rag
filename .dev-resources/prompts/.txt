@@ -61,3 +61,7 @@ There are couple of things which needs to be fixed/implemented:
 
 There are couple of things which needs to be fixed/implemented:
 1. The chat section should also have a drop down for model selection
+-----------------------------------
+
+There are couple of things which needs to be fixed/implemented:
+1. At the end of the chatbot response of battleground chat. There is always a word `Done` at the end of the response. Debug and fix the issue.
