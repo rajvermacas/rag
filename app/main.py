@@ -184,7 +184,6 @@ class AppServices:
     ingest_service: IngestServiceProtocol
     chat_service: ChatServiceProtocol
     document_service: DocumentServiceProtocol
-    retrieval_service: Any
     chat_provider_router: ChatProviderRouter
 
 
@@ -235,7 +234,6 @@ def _build_services(settings: Settings) -> AppServices:
         ingest_service=indexing_service,
         chat_service=chat_service,
         document_service=document_service,
-        retrieval_service=query_service,
         chat_provider_router=chat_provider_router,
     )
 

@@ -145,7 +145,6 @@ def _build_client(
         ingest_service=FakeIngestService(),
         chat_service=FakeChatService(),
         document_service=FakeDocumentService(),
-        retrieval_service=object(),
         chat_provider_router=FakeChatProviderRouter(),
     )
     monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)

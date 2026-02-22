@@ -53,7 +53,6 @@ def test_list_documents_returns_all_uploaded_documents(
         ingest_service=FakeIngestService(),
         chat_service=FakeChatService(),
         document_service=FakeDocumentService(),
-        retrieval_service=object(),
         chat_provider_router=object(),
     )
     monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
@@ -75,7 +74,6 @@ def test_delete_document_removes_indexed_document(
         ingest_service=FakeIngestService(),
         chat_service=FakeChatService(),
         document_service=fake_document_service,
-        retrieval_service=object(),
         chat_provider_router=object(),
     )
     monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
@@ -100,7 +98,6 @@ def test_delete_document_returns_404_when_doc_missing(
         ingest_service=FakeIngestService(),
         chat_service=FakeChatService(),
         document_service=FakeDocumentService(),
-        retrieval_service=object(),
         chat_provider_router=object(),
     )
     monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)

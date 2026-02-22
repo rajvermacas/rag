@@ -4,9 +4,6 @@ from dataclasses import dataclass
 import logging
 from typing import Any, AsyncIterator, Protocol
 
-from app.services.vector_store import IndexedChunk, IndexedDocument
-
-
 logger = logging.getLogger(__name__)
 NO_DOCUMENT_EVIDENCE = "No relevant evidence found in uploaded documents."
 
@@ -143,75 +140,3 @@ def _require_non_empty(value: str, field_name: str) -> str:
     if normalized == "":
         raise ValueError(f"{field_name} must not be empty")
     return normalized
-
-
-def _build_retrieval_query(question: str, history: list[ConversationTurn]) -> str:
-    if len(history) == 0:
-        return question
-    history_lines = [f"{turn.role}: {turn.message}" for turn in history[-6:]]
-    return f"Conversation history:\n{'\n'.join(history_lines)}\n\nCurrent question:\n{question}"
-
-
-def _build_system_prompt(has_document_evidence: bool) -> str:
-    if has_document_evidence:
-        evidence_instruction = (
-            "Use document evidence when available and do not include inline citations."
-        )
-    else:
-        evidence_instruction = (
-            f"If no evidence is available, state exactly: '{NO_DOCUMENT_EVIDENCE}'."
-        )
-    return (
-        "You are a conversational retrieval assistant. Keep responses concise. "
-        f"{evidence_instruction}"
-    )
-
-
-def _build_user_prompt(
-    question: str,
-    history: list[ConversationTurn],
-    chunks: list[IndexedChunk],
-    documents: list[IndexedDocument],
-) -> str:
-    history_text = _format_history(history)
-    context_text = _format_context(chunks)
-    documents_text = _format_documents(documents)
-    return (
-        f"Conversation history:\n{history_text}\n\n"
-        f"Available uploaded documents:\n{documents_text}\n\n"
-        f"Question:\n{question}\n\n"
-        f"Context:\n{context_text}"
-    )
-
-
-def _format_history(history: list[ConversationTurn]) -> str:
-    if len(history) == 0:
-        return "[none]"
-    return "\n".join([f"{turn.role}: {turn.message}" for turn in history])
-
-
-def _format_context(chunks: list[IndexedChunk]) -> str:
-    if len(chunks) == 0:
-        return "[none]"
-    return "\n\n".join(
-        [
-            (
-                f"[doc_id={chunk.doc_id} filename={chunk.filename} "
-                f"chunk_id={chunk.chunk_id} score={chunk.score:.4f} page={chunk.page}]\n"
-                f"{chunk.text}"
-            )
-            for chunk in chunks
-        ]
-    )
-
-
-def _format_documents(documents: list[IndexedDocument]) -> str:
-    if len(documents) == 0:
-        return "[none]"
-    return "\n".join(
-        [
-            f"{index + 1}. {document.filename} (doc_id={document.doc_id}, "
-            f"chunks={document.chunks_indexed})"
-            for index, document in enumerate(documents)
-        ]
-    )

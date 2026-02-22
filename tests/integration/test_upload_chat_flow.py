@@ -117,7 +117,6 @@ def test_upload_then_chat_returns_grounded_answer(
         ingest_service=ingest_service,
         chat_service=chat_service,
         document_service=document_service,
-        retrieval_service=object(),
         chat_provider_router=FakeChatProviderRouter(),
     )
     monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
@@ -155,7 +154,6 @@ def test_upload_then_chat_stream_returns_answer(
         ingest_service=ingest_service,
         chat_service=chat_service,
         document_service=document_service,
-        retrieval_service=object(),
         chat_provider_router=FakeChatProviderRouter(),
     )
     monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
@@ -190,7 +188,6 @@ def test_upload_then_chat_then_battleground_flow(
         ingest_service=ingest_service,
         chat_service=chat_service,
         document_service=document_service,
-        retrieval_service=object(),
         chat_provider_router=FakeChatProviderRouter(),
     )
     monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
