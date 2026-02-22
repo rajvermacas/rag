@@ -9,12 +9,15 @@ from typing import Mapping
 
 from dotenv import load_dotenv
 
+from app.constants import (
+    ALLOWED_CHAT_PROVIDERS,
+    PROVIDER_AZURE_OPENAI,
+    PROVIDER_OPENAI,
+    PROVIDER_OPENROUTER,
+)
+
 
 logger = logging.getLogger(__name__)
-_PROVIDER_OPENROUTER = "openrouter"
-_PROVIDER_OPENAI = "openai"
-_PROVIDER_AZURE_OPENAI = "azure_openai"
-_ALLOWED_PROVIDERS = (_PROVIDER_OPENROUTER, _PROVIDER_OPENAI, _PROVIDER_AZURE_OPENAI)
 _BACKEND_ID_PATTERN = re.compile(r"^[A-Za-z0-9_]+$")
 
 
@@ -45,7 +48,6 @@ class Settings:
     chunk_size: int
     chunk_overlap: int
     retrieval_top_k: int
-    min_relevance_score: float
     app_log_level: str
 
     @classmethod
@@ -65,7 +67,6 @@ class Settings:
             chunk_size=_parse_int("CHUNK_SIZE"),
             chunk_overlap=_parse_int("CHUNK_OVERLAP"),
             retrieval_top_k=_parse_int("RETRIEVAL_TOP_K"),
-            min_relevance_score=_parse_float("MIN_RELEVANCE_SCORE"),
             app_log_level=_require_env("APP_LOG_LEVEL"),
         )
 
@@ -84,16 +85,6 @@ def _parse_int(name: str) -> int:
     except ValueError as exc:
         raise ValueError(
             f"Invalid integer for environment variable {name}: {raw_value}"
-        ) from exc
-
-
-def _parse_float(name: str) -> float:
-    raw_value = _require_env(name)
-    try:
-        return float(raw_value)
-    except ValueError as exc:
-        raise ValueError(
-            f"Invalid float for environment variable {name}: {raw_value}"
         ) from exc
 
 
@@ -144,19 +135,19 @@ def _parse_chat_backend_profile(backend_id: str) -> ChatBackendProfile:
     backend_token = backend_id.upper()
     provider_env = f"CHAT_BACKEND_{backend_token}_PROVIDER"
     provider = _require_env(provider_env)
-    if provider not in _ALLOWED_PROVIDERS:
+    if provider not in ALLOWED_CHAT_PROVIDERS:
         raise ValueError(
             f"{provider_env} must be one of: "
-            f"{_PROVIDER_OPENROUTER}, {_PROVIDER_OPENAI}, {_PROVIDER_AZURE_OPENAI}"
+            f"{PROVIDER_OPENROUTER}, {PROVIDER_OPENAI}, {PROVIDER_AZURE_OPENAI}"
         )
     models = _parse_required_csv_with_uniqueness(
         f"CHAT_BACKEND_{backend_token}_MODELS",
         duplicate_error_label="model ids",
     )
     api_key = _require_env(f"CHAT_BACKEND_{backend_token}_API_KEY")
-    if provider == _PROVIDER_OPENROUTER:
+    if provider == PROVIDER_OPENROUTER:
         return _build_openrouter_profile(backend_id, models, api_key)
-    if provider == _PROVIDER_OPENAI:
+    if provider == PROVIDER_OPENAI:
         return _build_openai_profile(backend_id, models, api_key)
     return _build_azure_profile(backend_id, backend_token, models, api_key)
 
@@ -169,12 +160,12 @@ def _build_openrouter_profile(
     logger.info(
         "validated_chat_backend backend_id=%s provider=%s model_count=%s",
         backend_id,
-        _PROVIDER_OPENROUTER,
+        PROVIDER_OPENROUTER,
         len(models),
     )
     return ChatBackendProfile(
         backend_id=backend_id,
-        provider=_PROVIDER_OPENROUTER,
+        provider=PROVIDER_OPENROUTER,
         models=models,
         api_key=api_key,
         base_url=None,
@@ -192,12 +183,12 @@ def _build_openai_profile(
     logger.info(
         "validated_chat_backend backend_id=%s provider=%s model_count=%s",
         backend_id,
-        _PROVIDER_OPENAI,
+        PROVIDER_OPENAI,
         len(models),
     )
     return ChatBackendProfile(
         backend_id=backend_id,
-        provider=_PROVIDER_OPENAI,
+        provider=PROVIDER_OPENAI,
         models=models,
         api_key=api_key,
         base_url=None,
@@ -221,12 +212,12 @@ def _build_azure_profile(
     logger.info(
         "validated_chat_backend backend_id=%s provider=%s model_count=%s",
         backend_id,
-        _PROVIDER_AZURE_OPENAI,
+        PROVIDER_AZURE_OPENAI,
         len(models),
     )
     return ChatBackendProfile(
         backend_id=backend_id,
-        provider=_PROVIDER_AZURE_OPENAI,
+        provider=PROVIDER_AZURE_OPENAI,
         models=models,
         api_key=api_key,
         base_url=None,

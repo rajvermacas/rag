@@ -15,7 +15,6 @@ def _set_common_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CHUNK_SIZE", "800")
     monkeypatch.setenv("CHUNK_OVERLAP", "120")
     monkeypatch.setenv("RETRIEVAL_TOP_K", "5")
-    monkeypatch.setenv("MIN_RELEVANCE_SCORE", "0.4")
     monkeypatch.setenv("APP_LOG_LEVEL", "INFO")
 
 
@@ -248,7 +247,6 @@ def test_settings_from_env_success(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.max_upload_mb == 25
     assert settings.chunk_size == 800
     assert settings.chunk_overlap == 120
-    assert settings.min_relevance_score == 0.4
     assert settings.app_log_level == "INFO"
 
 
@@ -268,6 +266,7 @@ def test_load_environment_from_dotenv_sets_environment(
 
 def test_env_example_contains_required_provider_fields() -> None:
     content = Path(".env.example").read_text(encoding="utf-8")
-    assert "CHAT_BACKEND_OPENROUTER_LAB_PROVIDER=openrouter" in content
-    assert "CHAT_BACKEND_OPENAI_PROD_PROVIDER=openai" in content
-    assert "CHAT_BACKEND_AZURE_PROD_PROVIDER=azure_openai" in content
+    assert "CHAT_BACKEND_IDS=lab_vllm" in content
+    assert "CHAT_BACKEND_LAB_VLLM_PROVIDER=openrouter" in content
+    assert "# CHAT_BACKEND_OPENAI_PROD_PROVIDER=openai" in content
+    assert "# CHAT_BACKEND_AZURE_PROD_PROVIDER=azure_openai" in content

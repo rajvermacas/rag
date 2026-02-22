@@ -160,7 +160,7 @@ globalThis.fetch = async (url, options = {}) => {
           read: async () => {
             if (emitted) return { value: undefined, done: true };
             emitted = true;
-            return { value: encoder.encode("Revenue is 20."), done: false };
+            return { value: encoder.encode(__STREAM_CHUNK__), done: false };
           },
         }),
       },
@@ -193,6 +193,9 @@ elements["chat-model-select"].value = "lab_vllm||openai/gpt-4o-mini";
 pendingMessage = "What is revenue?";
 await elements["chat-form"].submit();
 const streamRequest = fetchCalls.find((call) => call.url === "/chat/stream");
+const postSubmitPayload = JSON.parse(localStorageRecords.get("rag-chat-sessions"));
+const postSubmitSession = postSubmitPayload.sessions[0];
+const lastMessage = postSubmitSession.messages[postSubmitSession.messages.length - 1];
 
 process.stdout.write(JSON.stringify({
   initialSessionCount: initialPayload.sessions.length,
@@ -203,7 +206,9 @@ process.stdout.write(JSON.stringify({
   afterClickSessionCount: afterClickPayload.sessions.length,
   chatModelOptionValues,
   chatModelOptionLabels,
-  streamRequestBody: streamRequest ? streamRequest.body : null
+  streamRequestBody: streamRequest ? streamRequest.body : null,
+  lastAssistantRole: lastMessage.role,
+  lastAssistantMessageText: lastMessage.text
 }));
 })().catch((error) => {
   process.stderr.write(String(error));
@@ -257,11 +262,16 @@ process.stdout.write(JSON.stringify({{ result }}));
     return result
 
 
-def _run_chat_session_harness(common_script: str, chat_script: str) -> dict[str, object]:
+def _run_chat_session_harness(
+    common_script: str,
+    chat_script: str,
+    stream_chunk: str = "Revenue is 20.",
+) -> dict[str, object]:
     harness = _CHAT_SESSION_HARNESS_TEMPLATE
     harness = harness.replace("__COMMON_SCRIPT__", json.dumps(common_script))
     harness = harness.replace("__CHAT_SCRIPT__", json.dumps(chat_script))
     harness = harness.replace("__DEFAULT_GREETING__", json.dumps("Hello! How can I assist you today?"))
+    harness = harness.replace("__STREAM_CHUNK__", json.dumps(stream_chunk))
     payload = json.loads(_run_node_harness(harness, "ui chat.js behavior test"))
     if not isinstance(payload, dict):
         raise RuntimeError("node harness output for chat.js must be an object")
@@ -310,6 +320,9 @@ def test_index_page_has_chat_and_battleground_scaffolds(
     assert 'id="chat-history-select"' in html
     assert 'id="chat-model-select"' in html
     assert 'id="clear-chat"' in html
+    assert 'id="chat-form" class="mt-4 flex flex-col gap-3 sm:flex-row" autocomplete="off"' in html
+    assert 'name="message"' in html
+    assert 'autocomplete="off"' in html
     assert "New Chat" in html
     assert '<script src="/static/js/common.js"></script>' in html
     assert '<script src="/static/js/chat.js"></script>' in html
@@ -367,6 +380,52 @@ def test_chat_script_keeps_single_session_when_new_chat_clicked_from_pristine_gr
         "backend_id": "lab_vllm",
         "model": "openai/gpt-4o-mini",
     }
+
+
+def test_chat_script_replaces_citation_only_stream_with_visible_assistant_message(
+    required_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = _build_index_page_client(monkeypatch)
+
+    common_response = client.get("/static/js/common.js")
+    chat_response = client.get("/static/js/chat.js")
+    assert common_response.status_code == 200
+    assert chat_response.status_code == 200
+
+    payload = _run_chat_session_harness(
+        common_response.text,
+        chat_response.text,
+        stream_chunk="[a.txt#0]",
+    )
+
+    assert payload["lastAssistantRole"] == "assistant"
+    assert payload["lastAssistantMessageText"] == (
+        "I could not generate a response from the current context. "
+        "Please rephrase your question."
+    )
+
+
+def test_chat_script_replaces_empty_response_sentinel_with_visible_assistant_message(
+    required_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = _build_index_page_client(monkeypatch)
+
+    common_response = client.get("/static/js/common.js")
+    chat_response = client.get("/static/js/chat.js")
+    assert common_response.status_code == 200
+    assert chat_response.status_code == 200
+
+    payload = _run_chat_session_harness(
+        common_response.text,
+        chat_response.text,
+        stream_chunk="Empty Response",
+    )
+
+    assert payload["lastAssistantRole"] == "assistant"
+    assert payload["lastAssistantMessageText"] == (
+        "I could not generate a response from the current context. "
+        "Please rephrase your question."
+    )
 
 
 def test_compiled_css_contains_chat_alignment_utilities(

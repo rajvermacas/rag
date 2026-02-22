@@ -13,30 +13,33 @@ Single-user RAG pipeline built with FastAPI, Tailwind CSS, and a LlamaIndex-cent
 - Model Battleground tab for side-by-side model comparison with shared RAG context
 - Fail-fast configuration validation (no silent defaults)
 
-## Required Environment Variables
+## Environment Variables
 
-All variables are required. App startup fails if any are missing.
 The app loads values from `.env` automatically at startup via `python-dotenv`.
+The defaults below are required for a single `openrouter` chat backend.
+Optional backend blocks can be enabled by adding their IDs to `CHAT_BACKEND_IDS`.
 
 ```bash
 OPENROUTER_API_KEY=...
 OPENROUTER_EMBED_MODEL=text-embedding-3-small
-CHAT_BACKEND_IDS=openrouter_lab,openai_prod,azure_prod
+CHAT_BACKEND_IDS=lab_vllm
 
-CHAT_BACKEND_OPENROUTER_LAB_PROVIDER=openrouter
-CHAT_BACKEND_OPENROUTER_LAB_MODELS=openai/gpt-4o-mini,anthropic/claude-3.5-sonnet
-CHAT_BACKEND_OPENROUTER_LAB_API_KEY=...
+CHAT_BACKEND_LAB_VLLM_PROVIDER=openrouter
+CHAT_BACKEND_LAB_VLLM_MODELS=openai/gpt-4o-mini,anthropic/claude-3.5-sonnet
+CHAT_BACKEND_LAB_VLLM_API_KEY=...
 
-CHAT_BACKEND_OPENAI_PROD_PROVIDER=openai
-CHAT_BACKEND_OPENAI_PROD_MODELS=gpt-4o-mini,gpt-4.1-mini
-CHAT_BACKEND_OPENAI_PROD_API_KEY=...
+# Optional OpenAI backend (add openai_prod to CHAT_BACKEND_IDS)
+# CHAT_BACKEND_OPENAI_PROD_PROVIDER=openai
+# CHAT_BACKEND_OPENAI_PROD_MODELS=gpt-4o-mini,gpt-4.1-mini
+# CHAT_BACKEND_OPENAI_PROD_API_KEY=...
 
-CHAT_BACKEND_AZURE_PROD_PROVIDER=azure_openai
-CHAT_BACKEND_AZURE_PROD_MODELS=gpt-4o-mini
-CHAT_BACKEND_AZURE_PROD_API_KEY=...
-CHAT_BACKEND_AZURE_PROD_AZURE_ENDPOINT=https://YOUR_RESOURCE_NAME.openai.azure.com
-CHAT_BACKEND_AZURE_PROD_AZURE_API_VERSION=2024-10-21
-CHAT_BACKEND_AZURE_PROD_AZURE_DEPLOYMENTS=gpt-4o-mini=chat-gpt4o-mini
+# Optional Azure OpenAI backend (add azure_prod to CHAT_BACKEND_IDS)
+# CHAT_BACKEND_AZURE_PROD_PROVIDER=azure_openai
+# CHAT_BACKEND_AZURE_PROD_MODELS=gpt-4o-mini
+# CHAT_BACKEND_AZURE_PROD_API_KEY=...
+# CHAT_BACKEND_AZURE_PROD_AZURE_ENDPOINT=https://YOUR_RESOURCE_NAME.openai.azure.com
+# CHAT_BACKEND_AZURE_PROD_AZURE_API_VERSION=2024-10-21
+# CHAT_BACKEND_AZURE_PROD_AZURE_DEPLOYMENTS=gpt-4o-mini=chat-gpt4o-mini
 
 CHROMA_PERSIST_DIR=/workspaces/rag/chroma
 CHROMA_COLLECTION_NAME=rag_docs
@@ -44,7 +47,6 @@ MAX_UPLOAD_MB=25
 CHUNK_SIZE=800
 CHUNK_OVERLAP=120
 RETRIEVAL_TOP_K=5
-MIN_RELEVANCE_SCORE=0.4
 APP_LOG_LEVEL=INFO
 ```
 

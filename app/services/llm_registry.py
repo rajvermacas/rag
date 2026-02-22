@@ -4,15 +4,17 @@ import logging
 from types import MappingProxyType
 from typing import Any, Mapping
 
+from app.constants import (
+    OPENROUTER_API_BASE_URL,
+    PROVIDER_AZURE_OPENAI,
+    PROVIDER_OPENAI,
+    PROVIDER_OPENROUTER,
+)
 from app.config import ChatBackendProfile
 from app.services.chat_provider_models import require_non_empty
 
 
 logger = logging.getLogger(__name__)
-_PROVIDER_OPENROUTER = "openrouter"
-_PROVIDER_OPENAI = "openai"
-_PROVIDER_AZURE_OPENAI = "azure_openai"
-_OPENROUTER_API_BASE_URL = "https://openrouter.ai/api/v1"
 
 
 class LLMRegistry:
@@ -48,11 +50,11 @@ class LLMRegistry:
 
 
 def _build_llamaindex_llm(profile: ChatBackendProfile, model: str) -> Any:
-    if profile.provider == _PROVIDER_OPENROUTER:
+    if profile.provider == PROVIDER_OPENROUTER:
         return _build_openrouter_llm(profile, model)
-    if profile.provider == _PROVIDER_OPENAI:
+    if profile.provider == PROVIDER_OPENAI:
         return _build_openai_llm(profile, model)
-    if profile.provider == _PROVIDER_AZURE_OPENAI:
+    if profile.provider == PROVIDER_AZURE_OPENAI:
         return _build_azure_openai_llm(profile, model)
     raise ValueError(f"unsupported provider for backend profile: {profile.provider}")
 
@@ -64,13 +66,13 @@ def _build_openrouter_llm(profile: ChatBackendProfile, model: str) -> Any:
         "is_chat_model=%s",
         profile.backend_id,
         model,
-        _OPENROUTER_API_BASE_URL,
+        OPENROUTER_API_BASE_URL,
         True,
     )
     return openai_like(
         model=model,
         api_key=profile.api_key,
-        api_base=_OPENROUTER_API_BASE_URL,
+        api_base=OPENROUTER_API_BASE_URL,
         is_chat_model=True,
     )
 

@@ -113,12 +113,16 @@
           id="chat-window"
           class="mt-3 h-[32rem] overflow-y-auto rounded-xl border border-zinc-200 bg-zinc-50 p-3"
         ></div>
-        <form id="chat-form" class="mt-4 flex flex-col gap-3 sm:flex-row">
+        <form id="chat-form" class="mt-4 flex flex-col gap-3 sm:flex-row" autocomplete="off">
           <input
             class="flex-1 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-red-500 focus:ring-2 focus:ring-red-500/20"
             type="text"
             name="message"
             placeholder="Ask a question about uploaded documents..."
+            autocomplete="off"
+            autocapitalize="off"
+            autocorrect="off"
+            spellcheck="false"
             required
           />
           <button

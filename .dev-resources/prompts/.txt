@@ -65,3 +65,25 @@ There are couple of things which needs to be fixed/implemented:
 
 There are couple of things which needs to be fixed/implemented:
 1. At the end of the chatbot response of battleground chat. There is always a word `Done` at the end of the response. Debug and fix the issue.
+-----------------------------------
+
+There are couple of things which needs to be fixed/implemented:
+1. Why is there hardcoded values in llm_registry.py
+_PROVIDER_OPENROUTER = "openrouter"
+_PROVIDER_OPENAI = "openai"
+_PROVIDER_AZURE_OPENAI = "azure_openai"
+_OPENROUTER_API_BASE_URL = "https://openrouter.ai/api/v1"
+
+2. check carefully what exactly is really needed in .env.example I can see stale vars not being referred anywhere in the code. Fix it.
+
+3. First chat takes a lot of time to get the response. From second message it works fine. Why don't you update to handle the heavy initialisation part at the time of service startup only. so that from the first msg itslef it seems fast.
+For your context, here is a log which always gets printed when the first message is taking time:
+None of PyTorch, TensorFlow >= 2.0, or Flax have been found. Models won't be available and only tokenizers, configuration and file/data utilities can be used.
+
+4. Clicking on The input box in the chatbot suggests my previous messages in a box on browser maybe on the HTML layer. please remove it.
+
+5. When the document is not uploaded Even for a hi message to the chatbot I receive `I could not generate a response from the current context. Please rephrase your question.`
+
+When the document is not present then also the chatbot should be able to chat as it is connect to LLM, it seems that there is somewhere a
+hard dependncy on the document and if the document is not found maybe the request is never sent to the LLM or so. Debug the issue and find
+the root cause

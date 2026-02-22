@@ -33,5 +33,4 @@ def required_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CHUNK_SIZE", "800")
     monkeypatch.setenv("CHUNK_OVERLAP", "120")
     monkeypatch.setenv("RETRIEVAL_TOP_K", "5")
-    monkeypatch.setenv("MIN_RELEVANCE_SCORE", "0.4")
     monkeypatch.setenv("APP_LOG_LEVEL", "INFO")

@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, field_validator
 
+from app.constants import OPENROUTER_API_BASE_URL
 from app.config import Settings, load_environment_from_dotenv
 from app.logging_config import configure_logging
 from app.services.battleground import BattlegroundService, CompareStreamEvent
@@ -30,6 +31,7 @@ from app.services.parsers import (
     ParserDependencyError,
     UnsupportedFileTypeError,
 )
+from app.startup_warmup import build_backend_model_pairs, warm_up_runtime_dependencies
 
 
 logger = logging.getLogger(__name__)
@@ -223,6 +225,8 @@ def _build_services(settings: Settings) -> AppServices:
             top_k=settings.retrieval_top_k,
         ),
     )
+    backend_model_pairs = build_backend_model_pairs(settings.chat_backend_profiles)
+    warm_up_runtime_dependencies(query_service, backend_model_pairs)
     chat_service = ChatService(query_service=query_service)
     chat_provider_router = _build_chat_provider_router(settings)
     return AppServices(
@@ -332,7 +336,7 @@ def _build_openrouter_embedding_model(api_key: str, embed_model: str) -> Any:
     return OpenAIEmbedding(
         model=embed_model,
         api_key=api_key,
-        api_base="https://openrouter.ai/api/v1",
+        api_base=OPENROUTER_API_BASE_URL,
     )
 
 

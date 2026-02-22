@@ -8,6 +8,9 @@
   const { requireElement, requireString, requireNumber, requireErrorMessage, renderMarkdown, removeCitationArtifacts, escapeHtml } = window.RagCommon;
   const CHAT_STORAGE_KEY = "rag-chat-sessions";
   const DEFAULT_CHAT_GREETING = "Hello! How can I assist you today?";
+  const EMPTY_ASSISTANT_RESPONSE_MESSAGE =
+    "I could not generate a response from the current context. Please rephrase your question.";
+  const EMPTY_RESPONSE_SENTINELS = new Set(["empty response", "empty reponse"]);
   const CHAT_MODELS_ENDPOINT = "/models/chat";
   const MODEL_SELECTION_SEPARATOR = "||";
 
@@ -660,10 +663,19 @@
     }
 
     const finalAnswer = removeCitationArtifacts(accumulatedText).trim();
-    if (finalAnswer === "") {
-      throw new Error("chat stream returned an empty answer");
+    if (!isEffectivelyEmptyAssistantAnswer(finalAnswer)) {
+      return finalAnswer;
     }
-    return finalAnswer;
+    upsertStreamedAssistantMessage(thinkingMessageId, EMPTY_ASSISTANT_RESPONSE_MESSAGE);
+    return EMPTY_ASSISTANT_RESPONSE_MESSAGE;
+  }
+
+  function isEffectivelyEmptyAssistantAnswer(text) {
+    if (typeof text !== "string") {
+      throw new Error("assistant answer must be a string");
+    }
+    const normalized = text.trim().toLowerCase();
+    return normalized === "" || EMPTY_RESPONSE_SENTINELS.has(normalized);
   }
 
   async function loadDocuments() {
