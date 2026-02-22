@@ -15,12 +15,16 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, field_validator
 
-from app.config import Settings, load_environment_from_dotenv
+from app.config import ChatBackendProfile, Settings, load_environment_from_dotenv
 from app.logging_config import configure_logging
+from app.services.azure_openai_chat_provider import AzureOpenAIChatProvider
 from app.services.battleground import BattlegroundService, CompareStreamEvent
 from app.services.chat import ChatService, ConversationTurn
+from app.services.chat_provider_models import BackendChatProvider
+from app.services.chat_provider_router import ChatProviderRouter
 from app.services.documents import DocumentService
 from app.services.ingest import IngestService
+from app.services.openai_compatible_chat_provider import OpenAICompatibleChatProvider
 from app.services.openrouter_client import OpenRouterClient
 from app.services.parsers import (
     EmptyExtractionError,
@@ -108,7 +112,9 @@ class BattlegroundCompareService(Protocol):
         self,
         question: str,
         history: list[ConversationTurn],
+        model_a_backend_id: str,
         model_a: str,
+        model_b_backend_id: str,
         model_b: str,
     ) -> AsyncIterator[CompareStreamEvent]:
         """Stream side-tagged compare events."""
@@ -120,7 +126,7 @@ class AppServices:
     chat_service: ChatService
     document_service: DocumentService
     retrieval_service: RetrievalService
-    chat_client: OpenRouterClient
+    chat_provider_router: ChatProviderRouter
 
 
 def create_app() -> FastAPI:
@@ -140,8 +146,9 @@ def _build_services(settings: Settings) -> AppServices:
     openrouter_client = OpenRouterClient(
         api_key=settings.openrouter_api_key,
         embed_model=settings.openrouter_embed_model,
-        chat_model=settings.openrouter_chat_model,
+        chat_model=settings.openrouter_embed_model,
     )
+    chat_provider_router = _build_chat_provider_router(settings)
     vector_store = ChromaVectorStore(
         persist_dir=settings.chroma_persist_dir,
         collection_name=settings.chroma_collection_name,
@@ -162,7 +169,7 @@ def _build_services(settings: Settings) -> AppServices:
     document_service = DocumentService(vector_store=vector_store)
     chat_service = ChatService(
         retrieval_service=retrieval_service,
-        chat_client=openrouter_client,
+        chat_client=chat_provider_router,
         document_service=document_service,
     )
     return AppServices(
@@ -170,20 +177,51 @@ def _build_services(settings: Settings) -> AppServices:
         chat_service=chat_service,
         document_service=document_service,
         retrieval_service=retrieval_service,
-        chat_client=openrouter_client,
+        chat_provider_router=chat_provider_router,
     )
 
 
 def _build_battleground_service(
     services: AppServices,
-    settings: Settings,
 ) -> BattlegroundCompareService:
     return BattlegroundService(
         retrieval_service=services.retrieval_service,
-        chat_client=services.chat_client,
+        chat_client=services.chat_provider_router,
         document_service=services.document_service,
-        allowed_models=settings.openrouter_battleground_models,
     )
+
+
+def _build_chat_provider_router(settings: Settings) -> ChatProviderRouter:
+    providers: dict[str, BackendChatProvider] = {}
+    for backend_id, profile in settings.chat_backend_profiles.items():
+        providers[backend_id] = _build_chat_provider_for_backend(profile)
+    logger.info("chat_provider_router_built backend_count=%s", len(providers))
+    return ChatProviderRouter(
+        backend_profiles=settings.chat_backend_profiles,
+        providers=providers,
+    )
+
+
+def _build_chat_provider_for_backend(profile: ChatBackendProfile) -> BackendChatProvider:
+    if profile.provider == "openai_compatible":
+        if profile.base_url is None:
+            raise ValueError(f"backend {profile.backend_id} missing base_url")
+        return OpenAICompatibleChatProvider(
+            base_url=profile.base_url,
+            api_key=profile.api_key,
+        )
+    if profile.provider == "azure_openai":
+        if profile.azure_endpoint is None:
+            raise ValueError(f"backend {profile.backend_id} missing azure_endpoint")
+        if profile.azure_api_version is None:
+            raise ValueError(f"backend {profile.backend_id} missing azure_api_version")
+        return AzureOpenAIChatProvider(
+            endpoint=profile.azure_endpoint,
+            api_key=profile.api_key,
+            api_version=profile.azure_api_version,
+            deployments=profile.azure_deployments,
+        )
+    raise ValueError(f"unsupported chat backend provider: {profile.provider}")
 
 
 def _register_routes(app: FastAPI, services: AppServices, settings: Settings) -> None:
@@ -422,7 +460,7 @@ def _register_battleground_routes(
         )
         history = _to_conversation_history(payload.history)
         try:
-            battleground_service = _build_battleground_service(services, settings)
+            battleground_service = _build_battleground_service(services)
             stream = await _prime_battleground_stream(
                 battleground_service.compare_stream(
                     question=payload.message,

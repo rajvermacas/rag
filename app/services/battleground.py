@@ -25,10 +25,17 @@ class RetrievalService(Protocol):
 
 
 class ChatClient(Protocol):
-    async def stream_chat_response_with_model(
-        self, model: str, system_prompt: str, user_prompt: str
+    async def stream_chat_response_with_backend(
+        self,
+        backend_id: str,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
     ) -> AsyncIterator[str]:
-        """Stream a chat response from OpenRouter with a model override."""
+        """Stream a chat response with explicit backend and model selection."""
+
+    def get_provider_for_backend(self, backend_id: str) -> str:
+        """Resolve provider id for a backend id."""
 
 
 class DocumentService(Protocol):
@@ -52,33 +59,44 @@ class BattlegroundService:
         retrieval_service: RetrievalService,
         chat_client: ChatClient,
         document_service: DocumentService,
-        allowed_models: tuple[str, ...],
     ) -> None:
-        normalized_allowed_models = _normalize_allowed_models(allowed_models)
         self._retrieval_service = retrieval_service
         self._chat_client = chat_client
         self._document_service = document_service
-        self._allowed_models = normalized_allowed_models
 
     async def compare_stream(
         self,
         question: str,
         history: list[ConversationTurn],
+        model_a_backend_id: str,
         model_a: str,
+        model_b_backend_id: str,
         model_b: str,
     ) -> AsyncIterator[CompareStreamEvent]:
-        normalized_model_a, normalized_model_b = _validate_compare_inputs(
-            question, model_a, model_b, self._allowed_models
+        normalized_inputs = _validate_compare_inputs(
+            question=question,
+            model_a_backend_id=model_a_backend_id,
+            model_a=model_a,
+            model_b_backend_id=model_b_backend_id,
+            model_b=model_b,
         )
         _validate_history(history)
+        provider_a = self._chat_client.get_provider_for_backend(normalized_inputs[0])
+        provider_b = self._chat_client.get_provider_for_backend(normalized_inputs[2])
         documents = self._document_service.list_documents()
         logger.info(
-            "battleground_compare_started question_length=%s history_turns=%s model_a=%s "
-            "model_b=%s available_documents=%s",
+            "battleground_compare_started question_length=%s history_turns=%s "
+            "model_a_backend_id=%s model_a_provider=%s model_a=%s "
+            "model_b_backend_id=%s model_b_provider=%s model_b=%s "
+            "available_documents=%s",
             len(question),
             len(history),
-            normalized_model_a,
-            normalized_model_b,
+            normalized_inputs[0],
+            provider_a,
+            normalized_inputs[1],
+            normalized_inputs[2],
+            provider_b,
+            normalized_inputs[3],
             len(documents),
         )
         retrieval_query = _build_retrieval_query(question, history)
@@ -91,12 +109,24 @@ class BattlegroundService:
         tasks = [
             asyncio.create_task(
                 self._stream_model_side(
-                    "A", normalized_model_a, system_prompt, user_prompt, queue
+                    side="A",
+                    backend_id=normalized_inputs[0],
+                    provider=provider_a,
+                    model=normalized_inputs[1],
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    queue=queue,
                 )
             ),
             asyncio.create_task(
                 self._stream_model_side(
-                    "B", normalized_model_b, system_prompt, user_prompt, queue
+                    side="B",
+                    backend_id=normalized_inputs[2],
+                    provider=provider_b,
+                    model=normalized_inputs[3],
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    queue=queue,
                 )
             ),
         ]
@@ -127,15 +157,24 @@ class BattlegroundService:
     async def _stream_model_side(
         self,
         side: str,
+        backend_id: str,
+        provider: str,
         model: str,
         system_prompt: str,
         user_prompt: str,
         queue: asyncio.Queue[CompareStreamEvent],
     ) -> None:
-        logger.info("battleground_side_stream_started side=%s model=%s", side, model)
+        logger.info(
+            "battleground_side_stream_started side=%s backend_id=%s provider=%s model=%s",
+            side,
+            backend_id,
+            provider,
+            model,
+        )
         chunk_count = 0
         try:
-            async for chunk in self._chat_client.stream_chat_response_with_model(
+            async for chunk in self._chat_client.stream_chat_response_with_backend(
+                backend_id,
                 model,
                 system_prompt,
                 user_prompt,
@@ -145,19 +184,32 @@ class BattlegroundService:
                 chunk_count += 1
                 await queue.put(CompareStreamEvent(side=side, kind="chunk", chunk=chunk, error=None))
             logger.info(
-                "battleground_side_stream_completed side=%s model=%s chunk_count=%s",
+                "battleground_side_stream_completed side=%s backend_id=%s provider=%s "
+                "model=%s chunk_count=%s",
                 side,
+                backend_id,
+                provider,
                 model,
                 chunk_count,
             )
             await queue.put(CompareStreamEvent(side=side, kind="done", chunk=None, error=None))
         except BaseException as exc:
             if _is_current_task_cancellation(exc):
-                logger.info("battleground_side_stream_cancelled side=%s model=%s", side, model)
+                logger.info(
+                    "battleground_side_stream_cancelled side=%s backend_id=%s provider=%s "
+                    "model=%s",
+                    side,
+                    backend_id,
+                    provider,
+                    model,
+                )
                 raise
             logger.exception(
-                "battleground_side_stream_failed side=%s model=%s error=%s",
+                "battleground_side_stream_failed side=%s backend_id=%s provider=%s "
+                "model=%s error=%s",
                 side,
+                backend_id,
+                provider,
                 model,
                 str(exc),
             )
@@ -177,40 +229,41 @@ async def _cancel_pending_tasks(tasks: list[asyncio.Task[None]]) -> None:
 
 def _validate_compare_inputs(
     question: str,
+    model_a_backend_id: str,
     model_a: str,
+    model_b_backend_id: str,
     model_b: str,
-    allowed_models: tuple[str, ...],
-) -> tuple[str, str]:
-    normalized_model_a = model_a.strip()
-    normalized_model_b = model_b.strip()
+) -> tuple[str, str, str, str]:
+    normalized_model_a_backend_id = _require_non_empty_field(
+        model_a_backend_id,
+        "model_a_backend_id",
+    )
+    normalized_model_a = _require_non_empty_field(model_a, "model_a")
+    normalized_model_b_backend_id = _require_non_empty_field(
+        model_b_backend_id,
+        "model_b_backend_id",
+    )
+    normalized_model_b = _require_non_empty_field(model_b, "model_b")
     if question.strip() == "":
         raise ValueError("question must not be empty")
-    if normalized_model_a == "":
-        raise ValueError("model_a must not be empty")
-    if normalized_model_b == "":
-        raise ValueError("model_b must not be empty")
-    if normalized_model_a == normalized_model_b:
+    if (
+        normalized_model_a_backend_id == normalized_model_b_backend_id
+        and normalized_model_a == normalized_model_b
+    ):
         raise ValueError("model_a and model_b must be different")
-    if normalized_model_a not in allowed_models:
-        raise ValueError("model_a is not allowed")
-    if normalized_model_b not in allowed_models:
-        raise ValueError("model_b is not allowed")
-    return normalized_model_a, normalized_model_b
+    return (
+        normalized_model_a_backend_id,
+        normalized_model_a,
+        normalized_model_b_backend_id,
+        normalized_model_b,
+    )
 
 
-def _normalize_allowed_models(allowed_models: tuple[str, ...]) -> tuple[str, ...]:
-    normalized = tuple(model.strip() for model in allowed_models)
-    _validate_allowed_models(normalized)
-    return normalized
-
-
-def _validate_allowed_models(allowed_models: tuple[str, ...]) -> None:
-    if len(allowed_models) == 0:
-        raise ValueError("allowed_models must not be empty")
-    if any(model == "" for model in allowed_models):
-        raise ValueError("allowed_models contains empty model id")
-    if len(set(allowed_models)) != len(allowed_models):
-        raise ValueError("allowed_models contains duplicate model id")
+def _require_non_empty_field(value: str, field_name: str) -> str:
+    normalized_value = value.strip()
+    if normalized_value == "":
+        raise ValueError(f"{field_name} must not be empty")
+    return normalized_value
 
 
 def _is_current_task_cancellation(exc: BaseException) -> bool:

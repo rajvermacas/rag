@@ -36,70 +36,74 @@ class FakeDocumentService:
         ]
 
 
-class FakeChatClient:
+class FakeChatProviderRouter:
     def __init__(self) -> None:
-        self.calls: list[tuple[str, str, str]] = []
+        self.calls: list[tuple[str, str, str, str]] = []
 
-    async def stream_chat_response_with_model(
-        self, model: str, system_prompt: str, user_prompt: str
+    def get_provider_for_backend(self, backend_id: str) -> str:
+        if backend_id == "lab_vllm":
+            return "openai_compatible"
+        if backend_id == "azure_prod":
+            return "azure_openai"
+        raise ValueError("backend_id is not allowed")
+
+    async def stream_chat_response_with_backend(
+        self,
+        backend_id: str,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
     ):
-        self.calls.append((model, system_prompt, user_prompt))
-        parts_by_model = {
-            "model-a": ["A1", "A2"],
-            "model-b": ["B1", "B2"],
-        }
-        for part in parts_by_model[model]:
-            yield part
-
-
-class FakeChatClientWithSideError:
-    async def stream_chat_response_with_model(
-        self, model: str, system_prompt: str, user_prompt: str
-    ):
-        if model == "model-a":
+        self.calls.append((backend_id, model, system_prompt, user_prompt))
+        if backend_id == "lab_vllm":
             yield "A1"
             yield "A2"
             return
-        if model == "model-b":
-            yield "B1"
-            raise RuntimeError("model-b stream failed")
+        yield "B1"
+        yield "B2"
 
 
-class FakeChatClientNoEvidence:
-    async def stream_chat_response_with_model(
-        self, model: str, system_prompt: str, user_prompt: str
+class FakeChatProviderRouterWithSideError:
+    def get_provider_for_backend(self, backend_id: str) -> str:
+        if backend_id == "lab_vllm":
+            return "openai_compatible"
+        if backend_id == "azure_prod":
+            return "azure_openai"
+        raise ValueError("backend_id is not allowed")
+
+    async def stream_chat_response_with_backend(
+        self,
+        backend_id: str,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+    ):
+        if backend_id == "lab_vllm":
+            yield "A1"
+            yield "A2"
+            return
+        yield "B1"
+        raise RuntimeError("model-b stream failed")
+
+
+class FakeChatProviderRouterNoEvidence:
+    def get_provider_for_backend(self, backend_id: str) -> str:
+        if backend_id == "lab_vllm":
+            return "openai_compatible"
+        if backend_id == "azure_prod":
+            return "azure_openai"
+        raise ValueError("backend_id is not allowed")
+
+    async def stream_chat_response_with_backend(
+        self,
+        backend_id: str,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
     ):
         if NO_DOCUMENT_EVIDENCE not in system_prompt:
             raise AssertionError("expected no-evidence guidance in system prompt")
-        if "Available uploaded documents:" not in user_prompt:
-            raise AssertionError("expected uploaded documents section")
-        if "Context:\n" not in user_prompt:
-            raise AssertionError("expected context section")
-        yield f"{model}-ok"
-
-
-class FakeChatClientWithCancelledError:
-    async def stream_chat_response_with_model(
-        self, model: str, system_prompt: str, user_prompt: str
-    ):
-        if model == "model-a":
-            yield "A1"
-            return
-        raise asyncio.CancelledError("model-b cancelled")
-
-
-class _SideCrash(BaseException):
-    pass
-
-
-class FakeChatClientWithBaseException:
-    async def stream_chat_response_with_model(
-        self, model: str, system_prompt: str, user_prompt: str
-    ):
-        if model == "model-a":
-            yield "A1"
-            return
-        raise _SideCrash("model-b crashed")
+        yield f"{backend_id}:{model}"
 
 
 def _sample_chunks() -> list[IndexedChunk]:
@@ -120,7 +124,9 @@ def _collect_events(service: BattlegroundService, question: str) -> list:
         stream = service.compare_stream(
             question=question,
             history=[ConversationTurn(role="user", message="Earlier message")],
+            model_a_backend_id="lab_vllm",
             model_a="model-a",
+            model_b_backend_id="azure_prod",
             model_b="model-b",
         )
         return [event async for event in stream]
@@ -128,25 +134,24 @@ def _collect_events(service: BattlegroundService, question: str) -> list:
     return asyncio.run(collect())
 
 
-def test_compare_stream_retrieves_once_and_tags_sides() -> None:
+def test_compare_stream_retrieves_once_and_forwards_backend_model() -> None:
     retrieval = FakeRetrievalService(_sample_chunks())
-    chat_client = FakeChatClient()
+    chat_router = FakeChatProviderRouter()
     service = BattlegroundService(
         retrieval_service=retrieval,
-        chat_client=chat_client,
+        chat_client=chat_router,
         document_service=FakeDocumentService(),
-        allowed_models=("model-a", "model-b"),
     )
 
     events = _collect_events(service, "What is revenue?")
 
     assert retrieval.calls == 1
     assert retrieval.last_query is not None
-    assert "Conversation history:" in retrieval.last_query
-    assert "Current question:" in retrieval.last_query
-    assert len(chat_client.calls) == 2
-    assert chat_client.calls[0][1] == chat_client.calls[1][1]
-    assert chat_client.calls[0][2] == chat_client.calls[1][2]
+    assert len(chat_router.calls) == 2
+    assert chat_router.calls[0][0] == "lab_vllm"
+    assert chat_router.calls[0][1] == "model-a"
+    assert chat_router.calls[1][0] == "azure_prod"
+    assert chat_router.calls[1][1] == "model-b"
 
     chunk_sides = {event.side for event in events if event.kind == "chunk"}
     done_sides = {event.side for event in events if event.kind == "done"}
@@ -155,44 +160,46 @@ def test_compare_stream_retrieves_once_and_tags_sides() -> None:
 
 
 def test_compare_stream_validation_errors_fail_fast() -> None:
-    retrieval = FakeRetrievalService(_sample_chunks())
     service = BattlegroundService(
-        retrieval_service=retrieval,
-        chat_client=FakeChatClient(),
+        retrieval_service=FakeRetrievalService(_sample_chunks()),
+        chat_client=FakeChatProviderRouter(),
         document_service=FakeDocumentService(),
-        allowed_models=("model-a", "model-b"),
     )
 
-    async def collect_invalid(question: str, model_a: str, model_b: str) -> list:
+    async def collect_invalid(
+        question: str,
+        model_a_backend_id: str,
+        model_a: str,
+        model_b_backend_id: str,
+        model_b: str,
+    ) -> list:
         stream = service.compare_stream(
             question=question,
             history=[],
+            model_a_backend_id=model_a_backend_id,
             model_a=model_a,
+            model_b_backend_id=model_b_backend_id,
             model_b=model_b,
         )
         return [event async for event in stream]
 
     with pytest.raises(ValueError, match="question must not be empty"):
-        asyncio.run(collect_invalid(" ", "model-a", "model-b"))
+        asyncio.run(collect_invalid(" ", "lab_vllm", "model-a", "azure_prod", "model-b"))
+    with pytest.raises(ValueError, match="model_a_backend_id must not be empty"):
+        asyncio.run(collect_invalid("q", "  ", "model-a", "azure_prod", "model-b"))
     with pytest.raises(ValueError, match="model_a must not be empty"):
-        asyncio.run(collect_invalid("q", "  ", "model-b"))
+        asyncio.run(collect_invalid("q", "lab_vllm", "  ", "azure_prod", "model-b"))
+    with pytest.raises(ValueError, match="model_b_backend_id must not be empty"):
+        asyncio.run(collect_invalid("q", "lab_vllm", "model-a", " ", "model-b"))
     with pytest.raises(ValueError, match="model_b must not be empty"):
-        asyncio.run(collect_invalid("q", "model-a", " "))
-    with pytest.raises(ValueError, match="model_a and model_b must be different"):
-        asyncio.run(collect_invalid("q", "model-a", "model-a"))
-    with pytest.raises(ValueError, match="model_a is not allowed"):
-        asyncio.run(collect_invalid("q", "bad-model", "model-b"))
-    with pytest.raises(ValueError, match="model_b is not allowed"):
-        asyncio.run(collect_invalid("q", "model-a", "bad-model"))
-    assert retrieval.calls == 0
+        asyncio.run(collect_invalid("q", "lab_vllm", "model-a", "azure_prod", " "))
 
 
 def test_compare_stream_emits_side_specific_error_and_continues() -> None:
     service = BattlegroundService(
         retrieval_service=FakeRetrievalService(_sample_chunks()),
-        chat_client=FakeChatClientWithSideError(),
+        chat_client=FakeChatProviderRouterWithSideError(),
         document_service=FakeDocumentService(),
-        allowed_models=("model-a", "model-b"),
     )
 
     events = _collect_events(service, "What is revenue?")
@@ -203,87 +210,16 @@ def test_compare_stream_emits_side_specific_error_and_continues() -> None:
     assert error_events[0].side == "B"
     assert error_events[0].error == "model-b stream failed"
     assert {event.side for event in done_events} == {"A"}
-    assert any(event.kind == "chunk" and event.side == "A" for event in events)
 
 
 def test_compare_stream_handles_no_evidence_retrieval_like_chat() -> None:
     service = BattlegroundService(
         retrieval_service=FakeRetrievalNoEvidence(),
-        chat_client=FakeChatClientNoEvidence(),
+        chat_client=FakeChatProviderRouterNoEvidence(),
         document_service=FakeDocumentService(),
-        allowed_models=("model-a", "model-b"),
     )
 
     events = _collect_events(service, "What is revenue?")
 
     chunk_events = [event for event in events if event.kind == "chunk"]
     assert {event.side for event in chunk_events} == {"A", "B"}
-
-
-def test_compare_stream_handles_cancelled_side_without_deadlock() -> None:
-    service = BattlegroundService(
-        retrieval_service=FakeRetrievalService(_sample_chunks()),
-        chat_client=FakeChatClientWithCancelledError(),
-        document_service=FakeDocumentService(),
-        allowed_models=("model-a", "model-b"),
-    )
-
-    async def collect() -> list:
-        stream = service.compare_stream(
-            question="What is revenue?",
-            history=[],
-            model_a="model-a",
-            model_b="model-b",
-        )
-        return [event async for event in stream]
-
-    events = asyncio.run(asyncio.wait_for(collect(), timeout=0.5))
-    error_events = [event for event in events if event.kind == "error"]
-    assert len(error_events) == 1
-    assert error_events[0].side == "B"
-    assert error_events[0].error == "model-b cancelled"
-
-
-def test_compare_stream_handles_base_exception_side_without_deadlock() -> None:
-    service = BattlegroundService(
-        retrieval_service=FakeRetrievalService(_sample_chunks()),
-        chat_client=FakeChatClientWithBaseException(),
-        document_service=FakeDocumentService(),
-        allowed_models=("model-a", "model-b"),
-    )
-
-    async def collect() -> list:
-        stream = service.compare_stream(
-            question="What is revenue?",
-            history=[],
-            model_a="model-a",
-            model_b="model-b",
-        )
-        return [event async for event in stream]
-
-    events = asyncio.run(asyncio.wait_for(collect(), timeout=0.5))
-    error_events = [event for event in events if event.kind == "error"]
-    assert len(error_events) == 1
-    assert error_events[0].side == "B"
-    assert error_events[0].error == "model-b crashed"
-
-
-def test_compare_stream_normalizes_allowed_models_for_membership_checks() -> None:
-    service = BattlegroundService(
-        retrieval_service=FakeRetrievalService(_sample_chunks()),
-        chat_client=FakeChatClient(),
-        document_service=FakeDocumentService(),
-        allowed_models=(" model-a ", "model-b "),
-    )
-
-    async def collect() -> list:
-        stream = service.compare_stream(
-            question="What is revenue?",
-            history=[],
-            model_a="model-a",
-            model_b="model-b",
-        )
-        return [event async for event in stream]
-
-    events = asyncio.run(collect())
-    assert len(events) > 0

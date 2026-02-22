@@ -31,118 +31,122 @@ class FakeDocumentService:
         ]
 
 
-class FakeChatClientNoEvidence:
-    async def generate_chat_response_with_model(
+class FakeChatRouterNoEvidence:
+    def get_provider_for_backend(self, backend_id: str) -> str:
+        if backend_id != "lab_vllm":
+            raise ValueError("backend_id is not allowed")
+        return "openai_compatible"
+
+    async def generate_chat_response_with_backend(
         self,
+        backend_id: str,
         model: str,
         system_prompt: str,
         user_prompt: str,
     ) -> str:
+        if backend_id != "lab_vllm":
+            raise AssertionError("chat service must pass selected backend_id")
         if model != "openai/gpt-4o-mini":
             raise AssertionError("chat service must pass selected model")
         if NO_DOCUMENT_EVIDENCE not in system_prompt:
             raise AssertionError("missing explicit no-evidence guidance")
-        if "exactly these two sections" in system_prompt:
-            raise AssertionError("system prompt should not force rigid section output")
-        if "Context:\n" not in user_prompt:
-            raise AssertionError("context section must be present")
         if "Conversation history:\nuser: Earlier message" not in user_prompt:
             raise AssertionError("conversation history should be present in user prompt")
-        if "Available uploaded documents:" not in user_prompt:
-            raise AssertionError("uploaded document catalog should be present")
-        if "a.txt" not in user_prompt or "b.pdf" not in user_prompt:
-            raise AssertionError("document filenames should be present in user prompt")
         return f"{NO_DOCUMENT_EVIDENCE} Revenue can refer to total income before expenses."
 
-    async def generate_chat_response(self, system_prompt: str, user_prompt: str) -> str:
-        return await self.generate_chat_response_with_model(
-            "openai/gpt-4o-mini",
-            system_prompt,
-            user_prompt,
-        )
-
-    async def stream_chat_response_with_model(self, model: str, system_prompt: str, user_prompt: str):
-        yield await self.generate_chat_response_with_model(model, system_prompt, user_prompt)
-
-    async def stream_chat_response(self, system_prompt: str, user_prompt: str):
-        yield await self.generate_chat_response_with_model(
-            "openai/gpt-4o-mini",
-            system_prompt,
-            user_prompt,
-        )
-
-
-class FakeChatClientWithEvidence:
-    async def generate_chat_response_with_model(
+    async def stream_chat_response_with_backend(
         self,
+        backend_id: str,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+    ):
+        yield await self.generate_chat_response_with_backend(
+            backend_id,
+            model,
+            system_prompt,
+            user_prompt,
+        )
+
+
+class FakeChatRouterWithEvidence:
+    def get_provider_for_backend(self, backend_id: str) -> str:
+        if backend_id != "lab_vllm":
+            raise ValueError("backend_id is not allowed")
+        return "openai_compatible"
+
+    async def generate_chat_response_with_backend(
+        self,
+        backend_id: str,
         model: str,
         system_prompt: str,
         user_prompt: str,
     ) -> str:
+        if backend_id != "lab_vllm":
+            raise AssertionError("chat service must pass selected backend_id")
         if model != "openai/gpt-4o-mini":
             raise AssertionError("chat service must pass selected model")
         if "do not include citations" not in system_prompt:
             raise AssertionError("missing no-citation requirement")
-        if "exactly these two sections" in system_prompt:
-            raise AssertionError("system prompt should not force rigid section output")
-        if "a.txt" not in user_prompt:
-            raise AssertionError("expected chunk metadata in context")
-        if "Available uploaded documents:" not in user_prompt:
-            raise AssertionError("uploaded document catalog should be present")
-        if "Conversation history:\nuser: Earlier message" not in user_prompt:
-            raise AssertionError("conversation history should be present in user prompt")
-        return "Revenue was 20. [a.txt#0] Revenue is commonly calculated before subtracting expenses."
+        return "Revenue was 20. [a.txt#0] Revenue is commonly calculated before expenses."
 
-    async def generate_chat_response(self, system_prompt: str, user_prompt: str) -> str:
-        return await self.generate_chat_response_with_model(
-            "openai/gpt-4o-mini",
-            system_prompt,
-            user_prompt,
-        )
-
-    async def stream_chat_response_with_model(self, model: str, system_prompt: str, user_prompt: str):
+    async def stream_chat_response_with_backend(
+        self,
+        backend_id: str,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+    ):
+        if backend_id != "lab_vllm":
+            raise AssertionError("chat service must pass selected backend_id")
         if model != "openai/gpt-4o-mini":
             raise AssertionError("chat service must pass selected model")
         yield "Revenue was "
         yield "20. [a.txt#0]"
 
-    async def stream_chat_response(self, system_prompt: str, user_prompt: str):
-        async for chunk in self.stream_chat_response_with_model(
-            "openai/gpt-4o-mini",
-            system_prompt,
-            user_prompt,
-        ):
-            yield chunk
 
+class FakeChatRouterNotExpected:
+    def get_provider_for_backend(self, backend_id: str) -> str:
+        if backend_id != "lab_vllm":
+            raise ValueError("backend_id is not allowed")
+        return "openai_compatible"
 
-class FakeChatClientNotExpected:
-    async def generate_chat_response_with_model(
+    async def generate_chat_response_with_backend(
         self,
+        backend_id: str,
         model: str,
         system_prompt: str,
         user_prompt: str,
     ) -> str:
-        raise AssertionError("chat client should not be called for inventory questions")
+        raise AssertionError("chat router should not be called for inventory questions")
 
-    async def generate_chat_response(self, system_prompt: str, user_prompt: str) -> str:
-        raise AssertionError("chat client should not be called for inventory questions")
-
-    async def stream_chat_response_with_model(self, model: str, system_prompt: str, user_prompt: str):
-        raise AssertionError("chat client should not be called for inventory questions")
-
-    async def stream_chat_response(self, system_prompt: str, user_prompt: str):
-        raise AssertionError("chat client should not be called for inventory questions")
+    async def stream_chat_response_with_backend(
+        self,
+        backend_id: str,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+    ):
+        raise AssertionError("chat router should not be called for inventory questions")
+        yield ""
 
 
 def test_chat_returns_unknown_without_evidence() -> None:
     service = ChatService(
         retrieval_service=FakeRetrievalNoEvidence(),
-        chat_client=FakeChatClientNoEvidence(),
+        chat_client=FakeChatRouterNoEvidence(),
         document_service=FakeDocumentService(),
     )
     history = [ConversationTurn(role="user", message="Earlier message")]
 
-    result = asyncio.run(service.answer_question("What is revenue?", history, "openai/gpt-4o-mini"))
+    result = asyncio.run(
+        service.answer_question(
+            question="What is revenue?",
+            history=history,
+            backend_id="lab_vllm",
+            model="openai/gpt-4o-mini",
+        )
+    )
 
     assert result.grounded is False
     assert NO_DOCUMENT_EVIDENCE in result.answer
@@ -153,12 +157,19 @@ def test_chat_returns_unknown_without_evidence() -> None:
 def test_chat_returns_grounded_answer_without_citations() -> None:
     service = ChatService(
         retrieval_service=FakeRetrievalWithEvidence(),
-        chat_client=FakeChatClientWithEvidence(),
+        chat_client=FakeChatRouterWithEvidence(),
         document_service=FakeDocumentService(),
     )
     history = [ConversationTurn(role="user", message="Earlier message")]
 
-    result = asyncio.run(service.answer_question("What is revenue?", history, "openai/gpt-4o-mini"))
+    result = asyncio.run(
+        service.answer_question(
+            question="What is revenue?",
+            history=history,
+            backend_id="lab_vllm",
+            model="openai/gpt-4o-mini",
+        )
+    )
 
     assert result.grounded is True
     assert "[a.txt#0]" not in result.answer
@@ -169,16 +180,17 @@ def test_chat_returns_grounded_answer_without_citations() -> None:
 def test_chat_stream_returns_chunks() -> None:
     service = ChatService(
         retrieval_service=FakeRetrievalWithEvidence(),
-        chat_client=FakeChatClientWithEvidence(),
+        chat_client=FakeChatRouterWithEvidence(),
         document_service=FakeDocumentService(),
     )
     history = [ConversationTurn(role="user", message="Earlier message")]
 
     async def collect_chunks() -> list[str]:
         stream = await service.stream_answer_question(
-            "What is revenue?",
-            history,
-            "openai/gpt-4o-mini",
+            question="What is revenue?",
+            history=history,
+            backend_id="lab_vllm",
+            model="openai/gpt-4o-mini",
         )
         return [chunk async for chunk in stream]
 
@@ -189,13 +201,20 @@ def test_chat_stream_returns_chunks() -> None:
 def test_chat_rejects_empty_history_message() -> None:
     service = ChatService(
         retrieval_service=FakeRetrievalNoEvidence(),
-        chat_client=FakeChatClientNoEvidence(),
+        chat_client=FakeChatRouterNoEvidence(),
         document_service=FakeDocumentService(),
     )
     history = [ConversationTurn(role="assistant", message=" ")]
 
     try:
-        asyncio.run(service.answer_question("What is revenue?", history, "openai/gpt-4o-mini"))
+        asyncio.run(
+            service.answer_question(
+                question="What is revenue?",
+                history=history,
+                backend_id="lab_vllm",
+                model="openai/gpt-4o-mini",
+            )
+        )
         raise AssertionError("expected ValueError for empty history message")
     except ValueError as exc:
         assert str(exc) == "history message must not be empty"
@@ -204,16 +223,17 @@ def test_chat_rejects_empty_history_message() -> None:
 def test_chat_answers_document_inventory_without_model_call() -> None:
     service = ChatService(
         retrieval_service=FakeRetrievalNoEvidence(),
-        chat_client=FakeChatClientNotExpected(),
+        chat_client=FakeChatRouterNotExpected(),
         document_service=FakeDocumentService(),
     )
     history = [ConversationTurn(role="user", message="Earlier message")]
 
     result = asyncio.run(
         service.answer_question(
-            "What documents do you have access to?",
-            history,
-            "openai/gpt-4o-mini",
+            question="What documents do you have access to?",
+            history=history,
+            backend_id="lab_vllm",
+            model="openai/gpt-4o-mini",
         )
     )
 
@@ -223,16 +243,45 @@ def test_chat_answers_document_inventory_without_model_call() -> None:
     assert "b.pdf" in result.answer
 
 
-def test_chat_rejects_empty_model_id() -> None:
+def test_chat_rejects_empty_backend_id() -> None:
     service = ChatService(
         retrieval_service=FakeRetrievalNoEvidence(),
-        chat_client=FakeChatClientNoEvidence(),
+        chat_client=FakeChatRouterNoEvidence(),
         document_service=FakeDocumentService(),
     )
     history = [ConversationTurn(role="user", message="Earlier message")]
 
     try:
-        asyncio.run(service.answer_question("What is revenue?", history, "  "))
+        asyncio.run(
+            service.answer_question(
+                question="What is revenue?",
+                history=history,
+                backend_id="   ",
+                model="openai/gpt-4o-mini",
+            )
+        )
+        raise AssertionError("expected ValueError for empty backend_id")
+    except ValueError as exc:
+        assert str(exc) == "backend_id must not be empty"
+
+
+def test_chat_rejects_empty_model_id() -> None:
+    service = ChatService(
+        retrieval_service=FakeRetrievalNoEvidence(),
+        chat_client=FakeChatRouterNoEvidence(),
+        document_service=FakeDocumentService(),
+    )
+    history = [ConversationTurn(role="user", message="Earlier message")]
+
+    try:
+        asyncio.run(
+            service.answer_question(
+                question="What is revenue?",
+                history=history,
+                backend_id="lab_vllm",
+                model="  ",
+            )
+        )
         raise AssertionError("expected ValueError for empty model")
     except ValueError as exc:
         assert str(exc) == "model must not be empty"

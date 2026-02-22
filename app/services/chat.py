@@ -23,29 +23,26 @@ class RetrievalService(Protocol):
 
 
 class ChatClient(Protocol):
-    async def generate_chat_response(self, system_prompt: str, user_prompt: str) -> str:
-        """Generate a chat response from OpenRouter."""
-
-    async def generate_chat_response_with_model(
+    async def generate_chat_response_with_backend(
         self,
+        backend_id: str,
         model: str,
         system_prompt: str,
         user_prompt: str,
     ) -> str:
-        """Generate a chat response with an explicit model override."""
+        """Generate a chat response with explicit backend and model selection."""
 
-    async def stream_chat_response(
-        self, system_prompt: str, user_prompt: str
-    ) -> AsyncIterator[str]:
-        """Stream a chat response from OpenRouter."""
-
-    async def stream_chat_response_with_model(
+    async def stream_chat_response_with_backend(
         self,
+        backend_id: str,
         model: str,
         system_prompt: str,
         user_prompt: str,
     ) -> AsyncIterator[str]:
-        """Stream a chat response with an explicit model override."""
+        """Stream a chat response with explicit backend and model selection."""
+
+    def get_provider_for_backend(self, backend_id: str) -> str:
+        """Resolve provider id for a backend id."""
 
 
 class DocumentService(Protocol):
@@ -84,25 +81,34 @@ class ChatService:
         self,
         question: str,
         history: list[ConversationTurn],
+        backend_id: str,
         model: str,
     ) -> ChatResult:
         if question.strip() == "":
             raise ValueError("question must not be empty")
+        normalized_backend_id = _require_non_empty_backend_id(backend_id)
         normalized_model = _require_non_empty_model_id(model)
+        provider = self._chat_client.get_provider_for_backend(normalized_backend_id)
         _validate_history(history)
         documents = self._document_service.list_documents()
         logger.info(
-            "chat_answer_started question_length=%s history_turns=%s available_documents=%s model=%s",
+            "chat_answer_started question_length=%s history_turns=%s available_documents=%s "
+            "backend_id=%s provider=%s model=%s",
             len(question),
             len(history),
             len(documents),
+            normalized_backend_id,
+            provider,
             normalized_model,
         )
         if _is_document_inventory_question(question):
             answer = _build_document_inventory_answer(documents)
             logger.info(
-                "chat_answer_completed_inventory_request document_count=%s model=%s",
+                "chat_answer_completed_inventory_request document_count=%s backend_id=%s "
+                "provider=%s model=%s",
                 len(documents),
+                normalized_backend_id,
+                provider,
                 normalized_model,
             )
             return ChatResult(
@@ -118,7 +124,8 @@ class ChatService:
 
         system_prompt = _build_system_prompt(has_document_evidence)
         user_prompt = _build_user_prompt(question, history, retrieved_chunks, documents)
-        raw_answer = await self._chat_client.generate_chat_response_with_model(
+        raw_answer = await self._chat_client.generate_chat_response_with_backend(
+            normalized_backend_id,
             normalized_model,
             system_prompt,
             user_prompt,
@@ -126,10 +133,13 @@ class ChatService:
         answer = _remove_inline_citations(raw_answer)
 
         logger.info(
-            "chat_answer_completed grounded=%s retrieved_count=%s history_turns=%s model=%s",
+            "chat_answer_completed grounded=%s retrieved_count=%s history_turns=%s "
+            "backend_id=%s provider=%s model=%s",
             has_document_evidence,
             len(retrieved_chunks),
             len(history),
+            normalized_backend_id,
+            provider,
             normalized_model,
         )
         return ChatResult(
@@ -143,25 +153,34 @@ class ChatService:
         self,
         question: str,
         history: list[ConversationTurn],
+        backend_id: str,
         model: str,
     ) -> AsyncIterator[str]:
         if question.strip() == "":
             raise ValueError("question must not be empty")
+        normalized_backend_id = _require_non_empty_backend_id(backend_id)
         normalized_model = _require_non_empty_model_id(model)
+        provider = self._chat_client.get_provider_for_backend(normalized_backend_id)
         _validate_history(history)
         documents = self._document_service.list_documents()
         logger.info(
-            "chat_stream_started question_length=%s history_turns=%s available_documents=%s model=%s",
+            "chat_stream_started question_length=%s history_turns=%s available_documents=%s "
+            "backend_id=%s provider=%s model=%s",
             len(question),
             len(history),
             len(documents),
+            normalized_backend_id,
+            provider,
             normalized_model,
         )
         if _is_document_inventory_question(question):
             answer = _build_document_inventory_answer(documents)
             logger.info(
-                "chat_stream_completed_inventory_request document_count=%s model=%s",
+                "chat_stream_completed_inventory_request document_count=%s backend_id=%s "
+                "provider=%s model=%s",
                 len(documents),
+                normalized_backend_id,
+                provider,
                 normalized_model,
             )
             return _single_chunk_stream(answer)
@@ -171,7 +190,8 @@ class ChatService:
         has_document_evidence = len(retrieved_chunks) > 0
         system_prompt = _build_system_prompt(has_document_evidence)
         user_prompt = _build_user_prompt(question, history, retrieved_chunks, documents)
-        return self._chat_client.stream_chat_response_with_model(
+        return self._chat_client.stream_chat_response_with_backend(
+            normalized_backend_id,
             normalized_model,
             system_prompt,
             user_prompt,
@@ -203,6 +223,13 @@ def _require_non_empty_model_id(model: str) -> str:
     if normalized_model == "":
         raise ValueError("model must not be empty")
     return normalized_model
+
+
+def _require_non_empty_backend_id(backend_id: str) -> str:
+    normalized_backend_id = backend_id.strip()
+    if normalized_backend_id == "":
+        raise ValueError("backend_id must not be empty")
+    return normalized_backend_id
 
 
 def _build_retrieval_query(question: str, history: list[ConversationTurn]) -> str:
