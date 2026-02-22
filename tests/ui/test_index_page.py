@@ -57,6 +57,8 @@ _CHAT_SESSION_HARNESS_TEMPLATE = """
 const commonScript = __COMMON_SCRIPT__;
 const chatScript = __CHAT_SCRIPT__;
 const defaultGreeting = __DEFAULT_GREETING__;
+const initialChatStorage = __INITIAL_CHAT_STORAGE__;
+const initialModelSelection = __INITIAL_MODEL_SELECTION__;
 const localStorageRecords = new Map();
 const windowListeners = new Map();
 const fetchCalls = [];
@@ -116,7 +118,14 @@ globalThis.document = {
 globalThis.localStorage = {
   getItem: (key) => (localStorageRecords.has(key) ? localStorageRecords.get(key) : null),
   setItem: (key, value) => localStorageRecords.set(key, value),
+  removeItem: (key) => localStorageRecords.delete(key),
 };
+if (initialChatStorage !== null) {
+  localStorageRecords.set("rag-chat-sessions", JSON.stringify(initialChatStorage));
+}
+if (initialModelSelection !== null) {
+  localStorageRecords.set("rag-chat-model-selection", initialModelSelection);
+}
 globalThis.crypto = { randomUUID: (() => { let n = 0; return () => `uuid-${++n}`; })() };
 globalThis.FormData = function() {
   return {
@@ -193,6 +202,7 @@ for (const handler of windowListeners.get("load") || []) {
   await handler();
 }
 
+const selectedModelAfterLoad = elements["chat-model-select"].value;
 const initialPayload = JSON.parse(localStorageRecords.get("rag-chat-sessions"));
 const initialSession = initialPayload.sessions[0];
 const initialMessage = initialSession.messages[0];
@@ -218,6 +228,7 @@ process.stdout.write(JSON.stringify({
   initialGreetingText: initialMessage.text,
   isInitialGreetingAssistant: initialMessage.role === "assistant",
   greetingMatchesDefault: initialMessage.text === defaultGreeting,
+  selectedModelAfterLoad,
   afterClickSessionCount: afterClickPayload.sessions.length,
   chatModelOptionValues,
   chatModelOptionLabels,
@@ -282,12 +293,16 @@ def _run_chat_session_harness(
     common_script: str,
     chat_script: str,
     stream_chunk: str = "Revenue is 20.",
+    initial_chat_storage: dict[str, object] | None = None,
+    initial_model_selection: str | None = None,
 ) -> dict[str, object]:
     harness = _CHAT_SESSION_HARNESS_TEMPLATE
     harness = harness.replace("__COMMON_SCRIPT__", json.dumps(common_script))
     harness = harness.replace("__CHAT_SCRIPT__", json.dumps(chat_script))
     harness = harness.replace("__DEFAULT_GREETING__", json.dumps("Hello! How can I assist you today?"))
     harness = harness.replace("__STREAM_CHUNK__", json.dumps(stream_chunk))
+    harness = harness.replace("__INITIAL_CHAT_STORAGE__", json.dumps(initial_chat_storage))
+    harness = harness.replace("__INITIAL_MODEL_SELECTION__", json.dumps(initial_model_selection))
     payload = json.loads(_run_node_harness(harness, "ui chat.js behavior test"))
     if not isinstance(payload, dict):
         raise RuntimeError("node harness output for chat.js must be an object")
@@ -419,6 +434,37 @@ def test_chat_script_replaces_citation_only_stream_with_visible_assistant_messag
         "I could not generate a response from the current context. "
         "Please rephrase your question."
     )
+
+
+def test_chat_script_restores_selected_model_from_persisted_storage(
+    required_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = _build_index_page_client(monkeypatch)
+
+    common_response = client.get("/static/js/common.js")
+    chat_response = client.get("/static/js/chat.js")
+    assert common_response.status_code == 200
+    assert chat_response.status_code == 200
+
+    persisted_chat_state = {
+        "activeSessionId": "session-1",
+        "sessions": [
+            {
+                "id": "session-1",
+                "label": "Current Chat",
+                "history": [],
+                "messages": [{"id": "message-1", "role": "assistant", "text": "Hello! How can I assist you today?"}],
+            }
+        ],
+    }
+    payload = _run_chat_session_harness(
+        common_response.text,
+        chat_response.text,
+        initial_chat_storage=persisted_chat_state,
+        initial_model_selection="lab_vllm||anthropic/claude-3.5-sonnet",
+    )
+
+    assert payload["selectedModelAfterLoad"] == "lab_vllm||anthropic/claude-3.5-sonnet"
 
 
 def test_chat_script_replaces_empty_response_sentinel_with_visible_assistant_message(

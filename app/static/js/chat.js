@@ -7,6 +7,7 @@
 
   const { requireElement, requireString, requireNumber, requireErrorMessage, renderMarkdown, removeCitationArtifacts, escapeHtml } = window.RagCommon;
   const CHAT_STORAGE_KEY = "rag-chat-sessions";
+  const CHAT_MODEL_SELECTION_STORAGE_KEY = "rag-chat-model-selection";
   const DEFAULT_CHAT_GREETING = "Hello! How can I assist you today?";
   const EMPTY_ASSISTANT_RESPONSE_MESSAGE =
     "I could not generate a response from the current context. Please rephrase your question.";
@@ -32,6 +33,7 @@
   const chatSessions = [];
   let activeSessionId = "";
   let conversationHistory = [];
+  let restoredChatModelSelectionValue = "";
   syncChatSubmitEnabledState();
 
   uploadForm.addEventListener("submit", async (event) => {
@@ -79,6 +81,7 @@
 
   chatModelSelect.addEventListener("change", () => {
     syncChatSubmitEnabledState();
+    persistSelectedChatModelSelection();
   });
 
   chatForm.addEventListener("submit", async (event) => {
@@ -122,6 +125,7 @@
 
   window.addEventListener("load", async () => {
     initializeChatSessions();
+    restorePersistedChatModelSelection();
     await loadChatModels();
     await loadDocuments();
   });
@@ -179,8 +183,48 @@
     models.forEach((model, index) => {
       chatModelSelect.append(createChatModelOption(model, index));
     });
-    chatModelSelect.value = "";
+    applyRestoredChatModelSelection();
     syncChatSubmitEnabledState();
+  }
+
+  function restorePersistedChatModelSelection() {
+    const persistedSelectionValue = localStorage.getItem(CHAT_MODEL_SELECTION_STORAGE_KEY);
+    if (persistedSelectionValue === null) {
+      restoredChatModelSelectionValue = "";
+      return;
+    }
+    const normalizedSelectionValue = persistedSelectionValue.trim();
+    if (normalizedSelectionValue === "") {
+      throw new Error("persisted chat model selection must not be empty");
+    }
+    parseChatModelSelectionValue(normalizedSelectionValue);
+    restoredChatModelSelectionValue = normalizedSelectionValue;
+  }
+
+  function applyRestoredChatModelSelection() {
+    if (restoredChatModelSelectionValue === "") {
+      chatModelSelect.value = "";
+      return;
+    }
+    chatModelSelect.value = restoredChatModelSelectionValue;
+    if (chatModelSelect.value !== restoredChatModelSelectionValue) {
+      throw new Error("persisted chat model selection is not available in chat model list");
+    }
+  }
+
+  function persistSelectedChatModelSelection() {
+    if (typeof chatModelSelect.value !== "string") {
+      throw new Error("chat model select value must be a string");
+    }
+    const normalizedSelectionValue = chatModelSelect.value.trim();
+    if (normalizedSelectionValue === "") {
+      restoredChatModelSelectionValue = "";
+      localStorage.removeItem(CHAT_MODEL_SELECTION_STORAGE_KEY);
+      return;
+    }
+    parseChatModelSelectionValue(normalizedSelectionValue);
+    restoredChatModelSelectionValue = normalizedSelectionValue;
+    localStorage.setItem(CHAT_MODEL_SELECTION_STORAGE_KEY, normalizedSelectionValue);
   }
 
   function validateChatModelList(models) {
