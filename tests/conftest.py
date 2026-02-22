@@ -12,13 +12,22 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 @pytest.fixture
 def required_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
-    monkeypatch.setenv("OPENROUTER_CHAT_MODEL", "openrouter/test-chat")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-openrouter-key")
     monkeypatch.setenv("OPENROUTER_EMBED_MODEL", "openrouter/test-embed")
-    monkeypatch.setenv(
-        "OPENROUTER_BATTLEGROUND_MODELS",
-        "openai/gpt-4o-mini,anthropic/claude-3.5-sonnet",
-    )
+    monkeypatch.setenv("CHAT_BACKEND_IDS", "lab_vllm,azure_prod")
+
+    monkeypatch.setenv("CHAT_BACKEND_LAB_VLLM_PROVIDER", "openai_compatible")
+    monkeypatch.setenv("CHAT_BACKEND_LAB_VLLM_MODELS", "openai/gpt-4o-mini,anthropic/claude-3.5-sonnet")
+    monkeypatch.setenv("CHAT_BACKEND_LAB_VLLM_API_KEY", "test-chat-key")
+    monkeypatch.setenv("CHAT_BACKEND_LAB_VLLM_BASE_URL", "https://openrouter.ai/api/v1")
+
+    monkeypatch.setenv("CHAT_BACKEND_AZURE_PROD_PROVIDER", "azure_openai")
+    monkeypatch.setenv("CHAT_BACKEND_AZURE_PROD_MODELS", "gpt-4o-mini")
+    monkeypatch.setenv("CHAT_BACKEND_AZURE_PROD_API_KEY", "test-azure-key")
+    monkeypatch.setenv("CHAT_BACKEND_AZURE_PROD_AZURE_ENDPOINT", "https://azure-openai.example.com")
+    monkeypatch.setenv("CHAT_BACKEND_AZURE_PROD_AZURE_API_VERSION", "2024-10-21")
+    monkeypatch.setenv("CHAT_BACKEND_AZURE_PROD_AZURE_DEPLOYMENTS", "gpt-4o-mini=chat-gpt4o-mini")
+
     monkeypatch.setenv("CHROMA_PERSIST_DIR", "/tmp/chroma-test")
     monkeypatch.setenv("CHROMA_COLLECTION_NAME", "rag_docs")
     monkeypatch.setenv("MAX_UPLOAD_MB", "25")
