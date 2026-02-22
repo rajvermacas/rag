@@ -50,6 +50,8 @@ class DocumentService:
             raise ValueError("doc_id must not be empty")
         logger.info("document_service_delete_started doc_id=%s", doc_id)
         deleted_chunks = self._vector_store.delete_document(doc_id)
+        if deleted_chunks <= 0:
+            raise ValueError(f"document not found: {doc_id}")
         logger.info(
             "document_service_delete_completed doc_id=%s chunks_deleted=%s",
             doc_id,
