@@ -266,3 +266,16 @@ def test_chat_script_keeps_single_session_when_new_chat_clicked_from_pristine_gr
     assert payload["initialGreetingText"] == "Hello! How can I assist you today?"
     assert payload["greetingMatchesDefault"] is True
     assert payload["afterClickSessionCount"] == 1
+
+
+def test_compiled_css_contains_chat_alignment_utilities(
+    required_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = _build_index_page_client(monkeypatch)
+
+    response = client.get("/static/css/output.css")
+    assert response.status_code == 200
+    css = response.text
+
+    assert ".justify-end{" in css
+    assert ".justify-start{" in css
