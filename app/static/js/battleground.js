@@ -129,13 +129,13 @@
       }
       setBattlegroundStatus("Comparing models...");
       logger.info("battleground_compare_request_started model_a=%s model_b=%s", modelA, modelB);
-      await streamComparison({
+      const erroredSides = await streamComparison({
         message,
         history: [],
         model_a: modelA,
         model_b: modelB,
       });
-      setBattlegroundStatus("Comparison complete.");
+      setBattlegroundStatus(buildCompletionStatus(erroredSides));
       logger.info("battleground_compare_request_completed");
     } catch (error) {
       const message = requireErrorMessage(error);
@@ -204,6 +204,7 @@
     buffered += decoder.decode();
     consumeNdjsonBuffer(buffered, true, terminalState);
     assertTerminalStateComplete(terminalState);
+    return listErroredSides(terminalState);
   }
 
   function consumeNdjsonBuffer(buffered, allowTrailingLine, terminalState) {
@@ -264,11 +265,12 @@
       return;
     }
     terminalState[side] = true;
+    markSideAsErrored(terminalState, side);
     appendOutputLine(outputElement, `Error: ${requireString(event, "error", "battleground error event")}`);
   }
 
   function createTerminalState() {
-    return { A: false, B: false };
+    return { A: false, B: false, errorA: false, errorB: false };
   }
 
   function requireTerminalState(terminalState) {
@@ -278,6 +280,44 @@
     if (typeof terminalState.A !== "boolean" || typeof terminalState.B !== "boolean") {
       throw new Error("terminal state must include boolean A and B values");
     }
+    if (typeof terminalState.errorA !== "boolean" || typeof terminalState.errorB !== "boolean") {
+      throw new Error("terminal state must include boolean errorA and errorB values");
+    }
+  }
+
+  function markSideAsErrored(terminalState, side) {
+    requireTerminalState(terminalState);
+    if (side === "A") {
+      terminalState.errorA = true;
+      return;
+    }
+    if (side === "B") {
+      terminalState.errorB = true;
+      return;
+    }
+    throw new Error(`unsupported battleground side: ${side}`);
+  }
+
+  function listErroredSides(terminalState) {
+    requireTerminalState(terminalState);
+    const erroredSides = [];
+    if (terminalState.errorA) {
+      erroredSides.push("A");
+    }
+    if (terminalState.errorB) {
+      erroredSides.push("B");
+    }
+    return erroredSides;
+  }
+
+  function buildCompletionStatus(erroredSides) {
+    if (!Array.isArray(erroredSides)) {
+      throw new Error("errored sides must be an array");
+    }
+    if (erroredSides.length === 0) {
+      return "Comparison complete.";
+    }
+    return `Comparison complete with side errors on: ${erroredSides.join(", ")}.`;
   }
 
   function assertTerminalStateComplete(terminalState) {

@@ -100,7 +100,7 @@ def test_battleground_script_loads_models_streams_side_outputs_and_preserves_tab
     assert read_snapshots[2]["modelB"] == "B says hi"
     assert payload["modelAOutput"] == "A says hi\nDone."
     assert payload["modelBOutput"] == "B says hi\nError: B failed"
-    assert payload["finalStatus"] == "Comparison complete."
+    assert payload["finalStatus"] == "Comparison complete with side errors on: B."
     assert payload["afterBattlegroundTab"] == {
         "chatHidden": True,
         "battlegroundHidden": False,

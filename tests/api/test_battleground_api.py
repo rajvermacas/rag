@@ -200,6 +200,39 @@ def test_compare_stream_returns_400_for_disallowed_models(
     assert response.json() == {"detail": "model_a is not allowed"}
 
 
+def test_compare_stream_returns_400_when_battleground_service_construction_fails(
+    required_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_services = AppServices(
+        ingest_service=FakeIngestService(),
+        chat_service=FakeChatService(),
+        document_service=FakeDocumentService(),
+        retrieval_service=object(),
+        chat_client=object(),
+    )
+    monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
+
+    def _raise_battleground_service_error(services, settings):
+        raise ValueError("OPENROUTER_BATTLEGROUND_MODELS must contain at least 2 distinct model ids")
+
+    monkeypatch.setattr(
+        main_module,
+        "_build_battleground_service",
+        _raise_battleground_service_error,
+    )
+    client = TestClient(create_app(), raise_server_exceptions=False)
+
+    response = client.post(
+        "/battleground/compare/stream",
+        json=_valid_compare_payload(),
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "detail": "OPENROUTER_BATTLEGROUND_MODELS must contain at least 2 distinct model ids"
+    }
+
+
 @pytest.mark.parametrize("missing_field", ["message", "history", "model_a", "model_b"])
 def test_compare_stream_returns_400_for_missing_required_fields(
     required_env: None, monkeypatch: pytest.MonkeyPatch, missing_field: str

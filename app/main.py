@@ -381,8 +381,8 @@ def _register_battleground_routes(
             payload.model_b,
         )
         history = _to_conversation_history(payload.history)
-        battleground_service = _build_battleground_service(services, settings)
         try:
+            battleground_service = _build_battleground_service(services, settings)
             stream = await _prime_battleground_stream(
                 battleground_service.compare_stream(
                     question=payload.message,

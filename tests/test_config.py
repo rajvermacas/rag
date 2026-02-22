@@ -121,6 +121,38 @@ def test_battleground_models_trimmed_from_csv(
     )
 
 
+def test_battleground_models_require_at_least_two_distinct_ids(
+    required_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OPENROUTER_BATTLEGROUND_MODELS", "openai/gpt-4o-mini")
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "OPENROUTER_BATTLEGROUND_MODELS must contain at least 2 distinct model ids"
+        ),
+    ):
+        Settings.from_env()
+
+
+def test_battleground_models_reject_duplicate_model_ids(
+    required_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(
+        "OPENROUTER_BATTLEGROUND_MODELS",
+        "openai/gpt-4o-mini,openai/gpt-4o-mini,anthropic/claude-3.5-sonnet",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "OPENROUTER_BATTLEGROUND_MODELS must not contain duplicate model ids: "
+            "openai/gpt-4o-mini"
+        ),
+    ):
+        Settings.from_env()
+
+
 def test_battleground_models_are_immutable(required_env: None) -> None:
     settings = Settings.from_env()
 

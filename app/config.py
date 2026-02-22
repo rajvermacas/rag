@@ -46,6 +46,29 @@ def _parse_required_csv(name: str) -> tuple[str, ...]:
     return tuple(values)
 
 
+def _find_duplicate_values(values: tuple[str, ...]) -> tuple[str, ...]:
+    duplicate_values: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if value in seen and value not in duplicate_values:
+            duplicate_values.append(value)
+        seen.add(value)
+    return tuple(duplicate_values)
+
+
+def _parse_battleground_models(name: str) -> tuple[str, ...]:
+    models = _parse_required_csv(name)
+    duplicate_models = _find_duplicate_values(models)
+    if len(duplicate_models) > 0:
+        raise ValueError(
+            f"{name} must not contain duplicate model ids: {', '.join(duplicate_models)}"
+        )
+    if len(models) < 2:
+        raise ValueError(f"{name} must contain at least 2 distinct model ids")
+    logger.info("validated_battleground_models model_count=%s", len(models))
+    return models
+
+
 def load_environment_from_dotenv(dotenv_path: str) -> bool:
     if dotenv_path.strip() == "":
         raise ValueError("dotenv_path must not be empty")
@@ -77,7 +100,7 @@ class Settings:
             openrouter_api_key=_require_env("OPENROUTER_API_KEY"),
             openrouter_chat_model=_require_env("OPENROUTER_CHAT_MODEL"),
             openrouter_embed_model=_require_env("OPENROUTER_EMBED_MODEL"),
-            openrouter_battleground_models=_parse_required_csv(
+            openrouter_battleground_models=_parse_battleground_models(
                 "OPENROUTER_BATTLEGROUND_MODELS"
             ),
             chroma_persist_dir=_require_env("CHROMA_PERSIST_DIR"),
