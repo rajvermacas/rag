@@ -11,6 +11,7 @@
     requireErrorMessage,
     renderMarkdown,
     removeCitationArtifacts,
+    escapeHtml,
   } = window.RagCommon;
   const logger = console;
 
@@ -30,6 +31,7 @@
   const modelBOutput = requireElement("battleground-model-b-output");
 
   const battlegroundHistory = [];
+  const battlegroundTranscript = createTranscriptStore();
 
   initializeTabNavigation();
   void initializeBattleground().catch(handleInitializationFailure);
@@ -74,7 +76,7 @@
     ensureSelectHasPlaceholder(modelASelect);
     ensureSelectHasPlaceholder(modelBSelect);
     resetModelTitles();
-    clearOutputs();
+    clearTranscript();
     battlegroundForm.addEventListener("submit", handleCompareSubmit);
     await loadModelOptions();
   }
@@ -149,8 +151,8 @@
         historyPayload.length
       );
       setBattlegroundStatus("Comparing models...");
-      const sideState = createSideState();
-      renderThinkingState(sideState);
+      const sideState = createSideState(message);
+      renderThinkingState();
       const result = await streamComparison(
         {
           message,
@@ -176,7 +178,8 @@
     }
   }
 
-  function clearOutputs() {
+  function clearTranscript() {
+    resetTranscriptStore();
     modelAOutput.innerHTML = "";
     modelBOutput.innerHTML = "";
   }
@@ -222,10 +225,22 @@
     return model;
   }
 
-  function createSideState() {
+  function createTranscriptStore() {
+    return { A: [], B: [] };
+  }
+
+  function resetTranscriptStore() {
+    battlegroundTranscript.A.length = 0;
+    battlegroundTranscript.B.length = 0;
+  }
+
+  function createSideState(message) {
+    if (typeof message !== "string" || message.trim() === "") {
+      throw new Error("side state message must be a non-empty string");
+    }
     return {
-      A: { markdownText: "", terminalText: "", thinking: true },
-      B: { markdownText: "", terminalText: "", thinking: true },
+      A: appendTranscriptTurn("A", message),
+      B: appendTranscriptTurn("B", message),
     };
   }
 
@@ -246,22 +261,87 @@
     throw new Error(`unsupported battleground side: ${side}`);
   }
 
-  function renderThinkingState(sideState) {
-    clearOutputs();
-    renderSide("A", sideState);
-    renderSide("B", sideState);
+  function appendTranscriptTurn(side, message) {
+    const entries = resolveTranscriptEntries(side);
+    entries.push({ role: "user", text: message });
+    const assistantEntry = { role: "assistant", markdownText: "", terminalText: "", thinking: true };
+    entries.push(assistantEntry);
+    return assistantEntry;
   }
 
-  function renderSide(side, sideState) {
-    const state = resolveSideState(sideState, side);
+  function resolveTranscriptEntries(side) {
+    if (side === "A") {
+      return battlegroundTranscript.A;
+    }
+    if (side === "B") {
+      return battlegroundTranscript.B;
+    }
+    throw new Error(`unsupported battleground side: ${side}`);
+  }
+
+  function renderThinkingState() {
+    renderSide("A");
+    renderSide("B");
+  }
+
+  function renderSide(side) {
     const outputElement = resolveSideOutput(side);
-    const combinedText = buildCombinedSideText(state);
+    const entries = resolveTranscriptEntries(side);
+    outputElement.innerHTML = buildSideTranscriptHtml(entries);
+    outputElement.scrollTop = outputElement.scrollHeight;
+  }
+
+  function buildSideTranscriptHtml(entries) {
+    if (!Array.isArray(entries)) {
+      throw new Error("side transcript entries must be an array");
+    }
+    return entries.map((entry) => buildTranscriptEntryHtml(entry)).join("");
+  }
+
+  function buildTranscriptEntryHtml(entry) {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      throw new Error("transcript entry must be an object");
+    }
+    if (entry.role === "user") {
+      return buildUserEntryHtml(entry);
+    }
+    if (entry.role === "assistant") {
+      return buildAssistantEntryHtml(entry);
+    }
+    throw new Error(`unsupported transcript role: ${String(entry.role)}`);
+  }
+
+  function buildUserEntryHtml(entry) {
+    if (typeof entry.text !== "string" || entry.text.trim() === "") {
+      throw new Error("user transcript entry text must be a non-empty string");
+    }
+    const escapedText = escapeHtml(entry.text).replace(/\n/g, "<br />");
+    return `
+      <article class="mb-3 flex justify-end">
+        <div class="max-w-[95%] rounded-xl border border-zinc-900 bg-zinc-900 px-3 py-2 text-sm text-white">
+          <p class="text-[11px] font-semibold uppercase tracking-wide text-zinc-300">You</p>
+          <p class="mt-1 leading-relaxed">${escapedText}</p>
+        </div>
+      </article>
+    `;
+  }
+
+  function buildAssistantEntryHtml(entry) {
+    const combinedText = buildCombinedSideText(entry);
     const cleanedText = removeCitationArtifacts(combinedText);
     const markdownHtml = cleanedText.trim() === "" ? "" : renderMarkdown(cleanedText);
-    const thinkingHtml = state.thinking
+    const thinkingHtml = entry.thinking
       ? "<p class=\"mt-2 text-sm text-zinc-500 animate-pulse\">Thinking...</p>"
       : "";
-    outputElement.innerHTML = `<div class="markdown-body">${markdownHtml}</div>${thinkingHtml}`;
+    return `
+      <article class="mb-3 flex justify-start">
+        <div class="max-w-[95%] rounded-xl border border-zinc-200 bg-zinc-100 px-3 py-2 text-sm text-zinc-800">
+          <p class="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Model</p>
+          <div class="markdown-body mt-1">${markdownHtml}</div>
+          ${thinkingHtml}
+        </div>
+      </article>
+    `;
   }
 
   function buildCombinedSideText(state) {
@@ -362,7 +442,7 @@
     if (hasChunk) {
       renderState.markdownText += requireString(event, "chunk", "battleground chunk event");
       renderState.thinking = false;
-      renderSide(side, sideState);
+      renderSide(side);
       return;
     }
     if (hasDone) {
@@ -372,7 +452,7 @@
       terminalState[side] = true;
       renderState.thinking = false;
       renderState.terminalText = appendTerminalText(renderState.terminalText, "Done.");
-      renderSide(side, sideState);
+      renderSide(side);
       return;
     }
     terminalState[side] = true;
@@ -382,7 +462,7 @@
       renderState.terminalText,
       `Error: ${requireString(event, "error", "battleground error event")}`
     );
-    renderSide(side, sideState);
+    renderSide(side);
   }
 
   function appendTerminalText(existingText, newLine) {

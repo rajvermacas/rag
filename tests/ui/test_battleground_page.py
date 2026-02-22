@@ -105,10 +105,14 @@ def test_battleground_script_loads_models_renders_markdown_supports_follow_ups_a
     read_snapshots = payload["readSnapshots"]
     assert "Thinking..." in read_snapshots[0]["modelAHtml"]
     assert "Thinking..." in read_snapshots[0]["modelBHtml"]
-    assert "<strong>hi</strong>" in payload["modelAHtml"]
-    assert "<em>hi</em>" in payload["modelBHtml"]
-    assert "Done." in payload["modelAHtml"]
-    assert "Error: B failed" in payload["modelBHtml"]
+    assert "Which answer is better?" in payload["modelAHtml"]
+    assert "Which answer is better?" in payload["modelBHtml"]
+    assert "Can you follow up with examples?" in payload["modelAHtml"]
+    assert "Can you follow up with examples?" in payload["modelBHtml"]
+    assert payload["modelAHtml"].count("<strong>hi</strong>") == 2
+    assert payload["modelBHtml"].count("<em>hi</em>") == 2
+    assert payload["modelAHtml"].count("Done.") == 2
+    assert payload["modelBHtml"].count("Error: B failed") == 2
     assert payload["finalStatus"] == "Comparison complete with side errors on: B."
     assert payload["afterBattlegroundTab"] == {
         "chatHidden": True,
@@ -200,6 +204,8 @@ def test_battleground_script_reports_error_when_stream_ends_without_terminal_eve
         "ui battleground.js truncated stream test",
     )
 
+    assert "Which answer is better?" in payload["modelAHtml"]
+    assert "Which answer is better?" in payload["modelBHtml"]
     assert "A partial" in payload["modelAHtml"]
     assert "B partial" in payload["modelBHtml"]
     assert payload["finalStatus"] == "Battleground stream ended before terminal events for side(s): A, B."

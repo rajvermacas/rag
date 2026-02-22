@@ -55,3 +55,7 @@ There are couple of things which needs to be fixed/implemented:
 3. There should be no Documents tab. Documents shoulld be visible just below the Upload button with filename and delete button.
 
 ----------------------------
+
+There are couple of things which needs to be fixed/implemented:
+1. On the Chat page, user message should appear on right and assistant message should appear on left. Right now both the messages start appear on the left side.
+2. 
