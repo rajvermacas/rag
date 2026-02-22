@@ -15,24 +15,21 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, field_validator
 
-from app.config import ChatBackendProfile, Settings, load_environment_from_dotenv
+from app.config import Settings, load_environment_from_dotenv
 from app.logging_config import configure_logging
-from app.services.azure_openai_chat_provider import AzureOpenAIChatProvider
 from app.services.battleground import BattlegroundService, CompareStreamEvent
 from app.services.chat import ChatService, ConversationTurn
-from app.services.chat_provider_models import BackendChatProvider, ChatModelOption
+from app.services.chat_provider_models import ChatModelOption
 from app.services.chat_provider_router import ChatProviderRouter
 from app.services.documents import DocumentService
-from app.services.ingest import IngestService
-from app.services.openai_compatible_chat_provider import OpenAICompatibleChatProvider
-from app.services.openrouter_client import OpenRouterClient
+from app.services.indexing import IndexingService
+from app.services.llm_registry import LLMRegistry
+from app.services.query_engine import QueryEngineService
 from app.services.parsers import (
     EmptyExtractionError,
     ParserDependencyError,
     UnsupportedFileTypeError,
 )
-from app.services.retrieval import RetrievalService
-from app.services.vector_store import ChromaVectorStore
 
 
 logger = logging.getLogger(__name__)
@@ -145,12 +142,45 @@ class BattlegroundCompareService(Protocol):
         """Stream side-tagged compare events."""
 
 
+class IngestServiceProtocol(Protocol):
+    async def ingest_upload(self, upload: UploadFile) -> Any:
+        """Ingest uploaded file content."""
+
+
+class ChatServiceProtocol(Protocol):
+    async def answer_question(
+        self,
+        question: str,
+        history: list[ConversationTurn],
+        backend_id: str,
+        model: str,
+    ) -> Any:
+        """Answer question non-streaming."""
+
+    async def stream_answer_question(
+        self,
+        question: str,
+        history: list[ConversationTurn],
+        backend_id: str,
+        model: str,
+    ) -> AsyncIterator[str]:
+        """Answer question with streaming output."""
+
+
+class DocumentServiceProtocol(Protocol):
+    def list_documents(self) -> list[Any]:
+        """List indexed documents."""
+
+    def delete_document(self, doc_id: str) -> int:
+        """Delete indexed document by id."""
+
+
 @dataclass(frozen=True)
 class AppServices:
-    ingest_service: IngestService
-    chat_service: ChatService
-    document_service: DocumentService
-    retrieval_service: RetrievalService
+    ingest_service: IngestServiceProtocol
+    chat_service: ChatServiceProtocol
+    document_service: DocumentServiceProtocol
+    retrieval_service: Any
     chat_provider_router: ChatProviderRouter
 
 
@@ -168,40 +198,38 @@ def create_app() -> FastAPI:
 
 
 def _build_services(settings: Settings) -> AppServices:
-    openrouter_client = OpenRouterClient(
-        api_key=settings.openrouter_api_key,
-        embed_model=settings.openrouter_embed_model,
-        chat_model=settings.openrouter_embed_model,
-    )
-    chat_provider_router = _build_chat_provider_router(settings)
-    vector_store = ChromaVectorStore(
+    collection = _build_chroma_collection(
         persist_dir=settings.chroma_persist_dir,
         collection_name=settings.chroma_collection_name,
     )
-    retrieval_service = RetrievalService(
-        embed_client=openrouter_client,
-        vector_store=vector_store,
-        top_k=settings.retrieval_top_k,
-        min_relevance_score=settings.min_relevance_score,
+    embed_model = _build_openrouter_embedding_model(
+        api_key=settings.openrouter_api_key,
+        embed_model=settings.openrouter_embed_model,
     )
-    ingest_service = IngestService(
-        embed_client=openrouter_client,
-        vector_store=vector_store,
+    indexing_service = IndexingService(
+        collection=collection,
         max_upload_mb=settings.max_upload_mb,
         chunk_size=settings.chunk_size,
         chunk_overlap=settings.chunk_overlap,
+        embed_model=embed_model,
     )
-    document_service = DocumentService(vector_store=vector_store)
-    chat_service = ChatService(
-        retrieval_service=retrieval_service,
-        chat_client=chat_provider_router,
-        document_service=document_service,
+    document_service = DocumentService(vector_store=indexing_service)
+    llm_registry = LLMRegistry(settings.chat_backend_profiles)
+    query_service = QueryEngineService(
+        llm_registry=llm_registry,
+        engine_factory=_LlamaIndexQueryEngineFactory(
+            collection=collection,
+            embed_model=embed_model,
+            top_k=settings.retrieval_top_k,
+        ),
     )
+    chat_service = ChatService(query_service=query_service)
+    chat_provider_router = _build_chat_provider_router(settings)
     return AppServices(
-        ingest_service=ingest_service,
+        ingest_service=indexing_service,
         chat_service=chat_service,
         document_service=document_service,
-        retrieval_service=retrieval_service,
+        retrieval_service=query_service,
         chat_provider_router=chat_provider_router,
     )
 
@@ -209,17 +237,13 @@ def _build_services(settings: Settings) -> AppServices:
 def _build_battleground_service(
     services: AppServices,
 ) -> BattlegroundCompareService:
-    return BattlegroundService(
-        retrieval_service=services.retrieval_service,
-        chat_client=services.chat_provider_router,
-        document_service=services.document_service,
-    )
+    return BattlegroundService(query_service=services.chat_service)
 
 
 def _build_chat_provider_router(settings: Settings) -> ChatProviderRouter:
-    providers: dict[str, BackendChatProvider] = {}
+    providers: dict[str, _UnusedBackendChatProvider] = {}
     for backend_id, profile in settings.chat_backend_profiles.items():
-        providers[backend_id] = _build_chat_provider_for_backend(profile)
+        providers[backend_id] = _UnusedBackendChatProvider(backend_id, profile.provider)
     logger.info("chat_provider_router_built backend_count=%s", len(providers))
     return ChatProviderRouter(
         backend_profiles=settings.chat_backend_profiles,
@@ -227,26 +251,113 @@ def _build_chat_provider_router(settings: Settings) -> ChatProviderRouter:
     )
 
 
-def _build_chat_provider_for_backend(profile: ChatBackendProfile) -> BackendChatProvider:
-    if profile.provider == "openai_compatible":
-        if profile.base_url is None:
-            raise ValueError(f"backend {profile.backend_id} missing base_url")
-        return OpenAICompatibleChatProvider(
-            base_url=profile.base_url,
-            api_key=profile.api_key,
+class _UnusedBackendChatProvider:
+    """Compatibility provider for model-option routing during migration."""
+
+    def __init__(self, backend_id: str, provider: str) -> None:
+        self._backend_id = backend_id
+        self._provider = provider
+
+    async def generate_chat_response_with_model(
+        self,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> str:
+        raise RuntimeError(
+            "chat provider router transport is deprecated and must not be called: "
+            f"backend_id={self._backend_id} provider={self._provider} model={model}"
         )
-    if profile.provider == "azure_openai":
-        if profile.azure_endpoint is None:
-            raise ValueError(f"backend {profile.backend_id} missing azure_endpoint")
-        if profile.azure_api_version is None:
-            raise ValueError(f"backend {profile.backend_id} missing azure_api_version")
-        return AzureOpenAIChatProvider(
-            endpoint=profile.azure_endpoint,
-            api_key=profile.api_key,
-            api_version=profile.azure_api_version,
-            deployments=profile.azure_deployments,
+
+    async def stream_chat_response_with_model(
+        self,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> AsyncIterator[str]:
+        raise RuntimeError(
+            "chat provider router stream transport is deprecated and must not be called: "
+            f"backend_id={self._backend_id} provider={self._provider} model={model}"
         )
-    raise ValueError(f"unsupported chat backend provider: {profile.provider}")
+        yield ""
+
+
+class _LlamaIndexQueryEngineFactory:
+    def __init__(self, collection: Any, embed_model: Any, top_k: int) -> None:
+        if top_k <= 0:
+            raise ValueError("top_k must be greater than 0")
+        if collection is None:
+            raise ValueError("collection must not be None")
+        if embed_model is None:
+            raise ValueError("embed_model must not be None")
+        self._collection = collection
+        self._embed_model = embed_model
+        self._top_k = top_k
+
+    def build_query_engine(self, llm: Any) -> Any:
+        return _build_llamaindex_query_engine(
+            collection=self._collection,
+            embed_model=self._embed_model,
+            llm=llm,
+            top_k=self._top_k,
+            streaming=False,
+        )
+
+    def build_streaming_query_engine(self, llm: Any) -> Any:
+        return _build_llamaindex_query_engine(
+            collection=self._collection,
+            embed_model=self._embed_model,
+            llm=llm,
+            top_k=self._top_k,
+            streaming=True,
+        )
+
+
+def _build_chroma_collection(persist_dir: str, collection_name: str) -> Any:
+    try:
+        import chromadb
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("Missing dependency for app wiring: chromadb") from exc
+    client = chromadb.PersistentClient(path=persist_dir)
+    return client.get_or_create_collection(name=collection_name)
+
+
+def _build_openrouter_embedding_model(api_key: str, embed_model: str) -> Any:
+    try:
+        from llama_index.embeddings.openai import OpenAIEmbedding
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "Missing dependency for app wiring: llama-index-embeddings-openai"
+        ) from exc
+    return OpenAIEmbedding(
+        model=embed_model,
+        api_key=api_key,
+        api_base="https://openrouter.ai/api/v1",
+    )
+
+
+def _build_llamaindex_query_engine(
+    collection: Any,
+    embed_model: Any,
+    llm: Any,
+    top_k: int,
+    streaming: bool,
+) -> Any:
+    try:
+        from llama_index.core import VectorStoreIndex
+        from llama_index.vector_stores.chroma import ChromaVectorStore
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("Missing dependency for app wiring: llama-index") from exc
+    vector_store = ChromaVectorStore(chroma_collection=collection)
+    index = VectorStoreIndex.from_vector_store(
+        vector_store=vector_store,
+        embed_model=embed_model,
+    )
+    return index.as_query_engine(
+        llm=llm,
+        similarity_top_k=top_k,
+        streaming=streaming,
+    )
 
 
 def _register_routes(app: FastAPI, services: AppServices, settings: Settings) -> None:

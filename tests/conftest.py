@@ -13,7 +13,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 @pytest.fixture
 def required_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-openrouter-key")
-    monkeypatch.setenv("OPENROUTER_EMBED_MODEL", "openrouter/test-embed")
+    monkeypatch.setenv("OPENROUTER_EMBED_MODEL", "text-embedding-3-small")
     monkeypatch.setenv("CHAT_BACKEND_IDS", "lab_vllm,azure_prod")
 
     monkeypatch.setenv("CHAT_BACKEND_LAB_VLLM_PROVIDER", "openrouter")

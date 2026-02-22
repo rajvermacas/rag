@@ -94,9 +94,15 @@ class FakeChatProviderRouter:
         return (
             ChatModelOption(
                 backend_id="lab_vllm",
-                provider="openai_compatible",
+                provider="openrouter",
                 model="openai/gpt-4o-mini",
-                label="lab_vllm (openai_compatible) · openai/gpt-4o-mini",
+                label="lab_vllm (openrouter) · openai/gpt-4o-mini",
+            ),
+            ChatModelOption(
+                backend_id="lab_vllm",
+                provider="openrouter",
+                model="anthropic/claude-3.5-sonnet",
+                label="lab_vllm (openrouter) · anthropic/claude-3.5-sonnet",
             ),
         )
 
@@ -172,3 +178,50 @@ def test_upload_then_chat_stream_returns_answer(
     )
     assert stream_response.status_code == 200
     assert stream_response.text == "The document says hello world."
+
+
+def test_upload_then_chat_then_battleground_flow(
+    required_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ingest_service = StatefulFakeIngestService()
+    chat_service = StatefulFakeChatService(ingest_service)
+    document_service = StatefulFakeDocumentService(ingest_service)
+    fake_services = AppServices(
+        ingest_service=ingest_service,
+        chat_service=chat_service,
+        document_service=document_service,
+        retrieval_service=object(),
+        chat_provider_router=FakeChatProviderRouter(),
+    )
+    monkeypatch.setattr(main_module, "_build_services", lambda settings: fake_services)
+    client = TestClient(create_app())
+
+    upload_response = client.post(
+        "/upload",
+        files={"file": ("a.txt", io.BytesIO(b"hello world"), "text/plain")},
+    )
+    assert upload_response.status_code == 200
+
+    chat_response = client.post(
+        "/chat",
+        json={
+            "message": "What does the document say?",
+            "history": [{"role": "user", "message": "Earlier message"}],
+            "backend_id": "lab_vllm",
+            "model": "openai/gpt-4o-mini",
+        },
+    )
+    assert chat_response.status_code == 200
+
+    compare_response = client.post(
+        "/battleground/compare/stream",
+        json={
+            "message": "What does the document say?",
+            "history": [{"role": "user", "message": "Earlier message"}],
+            "model_a_backend_id": "lab_vllm",
+            "model_a": "openai/gpt-4o-mini",
+            "model_b_backend_id": "lab_vllm",
+            "model_b": "anthropic/claude-3.5-sonnet",
+        },
+    )
+    assert compare_response.status_code == 200
