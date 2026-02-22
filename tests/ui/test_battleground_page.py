@@ -55,7 +55,7 @@ def _build_index_page_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     return TestClient(create_app())
 
 
-def test_battleground_script_loads_models_streams_side_outputs_and_preserves_tabs(
+def test_battleground_script_streams_multi_turn_battleground_chat_and_preserves_tabs(
     required_env: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     client = _build_index_page_client(monkeypatch)
@@ -88,19 +88,62 @@ def test_battleground_script_loads_models_streams_side_outputs_and_preserves_tab
         "method": "POST",
         "body": {
             "message": "Which answer is better?",
-            "history": [],
+            "history_a": [{"role": "user", "message": "Which answer is better?"}],
+            "history_b": [{"role": "user", "message": "Which answer is better?"}],
+            "model_a": "openai/gpt-4o-mini",
+            "model_b": "anthropic/claude-3.5-sonnet",
+        },
+    }
+    assert payload["fetchCalls"][2] == {
+        "url": "/battleground/compare/stream",
+        "method": "POST",
+        "body": {
+            "message": "Give me a short follow-up",
+            "history_a": [
+                {"role": "user", "message": "Which answer is better?"},
+                {"role": "assistant", "message": "A says hi"},
+                {"role": "user", "message": "Give me a short follow-up"},
+            ],
+            "history_b": [
+                {"role": "user", "message": "Which answer is better?"},
+                {"role": "assistant", "message": "B says hi"},
+                {"role": "user", "message": "Give me a short follow-up"},
+            ],
             "model_a": "openai/gpt-4o-mini",
             "model_b": "anthropic/claude-3.5-sonnet",
         },
     }
     read_snapshots = payload["readSnapshots"]
-    assert read_snapshots[1]["modelA"] == "A says hi"
-    assert read_snapshots[1]["modelB"] == ""
-    assert read_snapshots[2]["modelA"] == "A says hi\nDone."
-    assert read_snapshots[2]["modelB"] == "B says hi"
-    assert payload["modelAOutput"] == "A says hi\nDone."
-    assert payload["modelBOutput"] == "B says hi\nError: B failed"
-    assert payload["finalStatus"] == "Comparison complete with side errors on: B."
+    assert read_snapshots[0]["status"] == "Comparing models..."
+    assert read_snapshots[-1]["status"] == "Comparing models..."
+    assert payload["modelSelectStateAfterFirstTurn"] == {"modelADisabled": True, "modelBDisabled": True}
+    assert payload["modelAOutput"] == [
+        "You: Which answer is better?",
+        "Model A: A says hi",
+        "You: Give me a short follow-up",
+        "Model A: A follow up",
+    ]
+    assert payload["modelBOutput"] == [
+        "You: Which answer is better?",
+        "Model B: B says hi",
+        "You: Give me a short follow-up",
+        "Error: B failed",
+    ]
+    assert payload["persistedState"]["selectedModelA"] == "openai/gpt-4o-mini"
+    assert payload["persistedState"]["selectedModelB"] == "anthropic/claude-3.5-sonnet"
+    assert payload["persistedState"]["isModelSelectionLocked"] is True
+    assert payload["persistedState"]["historyA"] == [
+        {"role": "user", "message": "Which answer is better?"},
+        {"role": "assistant", "message": "A says hi"},
+        {"role": "user", "message": "Give me a short follow-up"},
+        {"role": "assistant", "message": "A follow up"},
+    ]
+    assert payload["persistedState"]["historyB"] == [
+        {"role": "user", "message": "Which answer is better?"},
+        {"role": "assistant", "message": "B says hi"},
+        {"role": "user", "message": "Give me a short follow-up"},
+    ]
+    assert payload["finalStatus"] == "Turn complete with side errors on: B."
     assert payload["afterBattlegroundTab"] == {
         "chatHidden": True,
         "battlegroundHidden": False,
@@ -191,7 +234,7 @@ def test_battleground_script_reports_error_when_stream_ends_without_terminal_eve
         "ui battleground.js truncated stream test",
     )
 
-    assert payload["modelAOutput"] == "A partial"
-    assert payload["modelBOutput"] == "B partial"
+    assert payload["modelAOutput"] == ["You: Which answer is better?", "Model A: A partial"]
+    assert payload["modelBOutput"] == ["You: Which answer is better?", "Model B: B partial"]
     assert payload["finalStatus"] == "Battleground stream ended before terminal events for side(s): A, B."
     assert payload["finalStatus"] != "Comparison complete."

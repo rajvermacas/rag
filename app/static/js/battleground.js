@@ -5,8 +5,14 @@
     throw new Error("RagCommon is required before battleground.js");
   }
 
-  const { requireElement, requireString, requireErrorMessage } = window.RagCommon;
+  const {
+    requireElement,
+    requireString,
+    requireErrorMessage,
+    removeCitationArtifacts,
+  } = window.RagCommon;
   const logger = console;
+  const BATTLEGROUND_STORAGE_KEY = "rag-battleground-state";
 
   const navChat = requireElement("nav-chat");
   const navBattleground = requireElement("nav-battleground");
@@ -15,14 +21,30 @@
   const battlegroundForm = requireElement("battleground-form");
   const battlegroundMessage = requireElement("battleground-message");
   const battlegroundSubmit = requireElement("battleground-submit");
+  const clearBattlegroundChatButton = requireElement("clear-battleground-chat");
   const modelASelect = requireElement("model-a-select");
   const modelBSelect = requireElement("model-b-select");
   const battlegroundStatus = requireElement("battleground-status");
   const modelAOutput = requireElement("battleground-model-a-output");
   const modelBOutput = requireElement("battleground-model-b-output");
 
+  const state = createInitialState();
+
   initializeTabNavigation();
   void initializeBattleground().catch(handleInitializationFailure);
+
+  function createInitialState() {
+    return {
+      selectedModelA: "",
+      selectedModelB: "",
+      isModelSelectionLocked: false,
+      historyA: [],
+      historyB: [],
+      messagesA: [],
+      messagesB: [],
+      isSubmitting: false,
+    };
+  }
 
   function initializeTabNavigation() {
     navChat.addEventListener("click", () => {
@@ -59,10 +81,13 @@
   async function initializeBattleground() {
     ensureSelectHasPlaceholder(modelASelect);
     ensureSelectHasPlaceholder(modelBSelect);
-    modelAOutput.textContent = "";
-    modelBOutput.textContent = "";
     battlegroundForm.addEventListener("submit", handleCompareSubmit);
+    clearBattlegroundChatButton.addEventListener("click", handleClearBattlegroundChat);
+    modelASelect.addEventListener("change", handleModelSelectChange);
+    modelBSelect.addEventListener("change", handleModelSelectChange);
     await loadModelOptions();
+    restorePersistedBattlegroundState();
+    renderOutputs();
   }
 
   function handleInitializationFailure(error) {
@@ -116,39 +141,155 @@
     selectElement.value = "";
   }
 
-  async function handleCompareSubmit(event) {
-    event.preventDefault();
-    battlegroundSubmit.disabled = true;
-    try {
-      clearOutputs();
-      const message = readRequiredMessage();
-      const modelA = readRequiredModel(modelASelect, "Choose a model for Model A.");
-      const modelB = readRequiredModel(modelBSelect, "Choose a model for Model B.");
-      if (modelA === modelB) {
-        throw new Error("Model A and Model B must be different.");
+  function handleModelSelectChange() {
+    if (state.isModelSelectionLocked) {
+      return;
+    }
+    state.selectedModelA = modelASelect.value.trim();
+    state.selectedModelB = modelBSelect.value.trim();
+    persistBattlegroundState();
+  }
+
+  function restorePersistedBattlegroundState() {
+    const persistedState = loadPersistedBattlegroundState();
+    if (persistedState === null) {
+      return;
+    }
+    validatePersistedBattlegroundState(persistedState);
+    state.selectedModelA = persistedState.selectedModelA;
+    state.selectedModelB = persistedState.selectedModelB;
+    state.isModelSelectionLocked = persistedState.isModelSelectionLocked;
+    state.historyA = persistedState.historyA;
+    state.historyB = persistedState.historyB;
+    state.messagesA = persistedState.messagesA;
+    state.messagesB = persistedState.messagesB;
+    applyRestoredModelState();
+    logger.info(
+      "battleground_state_restored history_turns_a=%s history_turns_b=%s",
+      state.historyA.length,
+      state.historyB.length
+    );
+  }
+
+  function loadPersistedBattlegroundState() {
+    const rawState = localStorage.getItem(BATTLEGROUND_STORAGE_KEY);
+    if (rawState === null) {
+      return null;
+    }
+    const parsedState = JSON.parse(rawState);
+    if (typeof parsedState !== "object" || parsedState === null) {
+      throw new Error("persisted battleground state must be an object");
+    }
+    return parsedState;
+  }
+
+  function validatePersistedBattlegroundState(parsedState) {
+    requireString(parsedState, "selectedModelA", "persisted battleground state");
+    requireString(parsedState, "selectedModelB", "persisted battleground state");
+    if (!("isModelSelectionLocked" in parsedState)) {
+      throw new Error("persisted battleground state missing isModelSelectionLocked");
+    }
+    if (typeof parsedState.isModelSelectionLocked !== "boolean") {
+      throw new Error("persisted battleground state isModelSelectionLocked must be a boolean");
+    }
+    validateTurnList(parsedState, "historyA");
+    validateTurnList(parsedState, "historyB");
+    validateMessageList(parsedState, "messagesA");
+    validateMessageList(parsedState, "messagesB");
+  }
+
+  function validateTurnList(stateObject, key) {
+    if (!(key in stateObject) || !Array.isArray(stateObject[key])) {
+      throw new Error(`persisted battleground state missing array '${key}'`);
+    }
+    stateObject[key].forEach((turn, index) => {
+      const context = `${key}[${index}]`;
+      const role = requireString(turn, "role", context);
+      const message = requireString(turn, "message", context).trim();
+      if (!["user", "assistant"].includes(role)) {
+        throw new Error(`unsupported role in ${context}: ${role}`);
       }
-      setBattlegroundStatus("Comparing models...");
-      logger.info("battleground_compare_request_started model_a=%s model_b=%s", modelA, modelB);
-      const erroredSides = await streamComparison({
-        message,
-        history: [],
-        model_a: modelA,
-        model_b: modelB,
-      });
-      setBattlegroundStatus(buildCompletionStatus(erroredSides));
-      logger.info("battleground_compare_request_completed");
-    } catch (error) {
-      const message = requireErrorMessage(error);
-      setBattlegroundStatus(message);
-      logger.error("battleground_compare_request_failed error=%s", message);
-    } finally {
-      battlegroundSubmit.disabled = false;
+      if (message === "") {
+        throw new Error(`message in ${context} must not be empty`);
+      }
+    });
+  }
+
+  function validateMessageList(stateObject, key) {
+    if (!(key in stateObject) || !Array.isArray(stateObject[key])) {
+      throw new Error(`persisted battleground state missing array '${key}'`);
+    }
+    stateObject[key].forEach((entry, index) => {
+      const context = `${key}[${index}]`;
+      const role = requireString(entry, "role", context);
+      const text = requireString(entry, "text", context).trim();
+      if (!["user", "assistant", "error"].includes(role)) {
+        throw new Error(`unsupported message role in ${context}: ${role}`);
+      }
+      if (text === "") {
+        throw new Error(`message text in ${context} must not be empty`);
+      }
+    });
+  }
+
+  function applyRestoredModelState() {
+    if (state.selectedModelA !== "") {
+      ensureSelectIncludesValue(modelASelect, state.selectedModelA);
+      modelASelect.value = state.selectedModelA;
+    }
+    if (state.selectedModelB !== "") {
+      ensureSelectIncludesValue(modelBSelect, state.selectedModelB);
+      modelBSelect.value = state.selectedModelB;
+    }
+    applyModelLockState();
+  }
+
+  function ensureSelectIncludesValue(selectElement, value) {
+    const optionValues = Array.from(selectElement.options).map((option) => option.value);
+    if (!optionValues.includes(value)) {
+      throw new Error(`select '${selectElement.id}' missing option value '${value}'`);
     }
   }
 
-  function clearOutputs() {
-    modelAOutput.textContent = "";
-    modelBOutput.textContent = "";
+  async function handleCompareSubmit(event) {
+    event.preventDefault();
+    if (state.isSubmitting) {
+      throw new Error("battleground compare request already in progress");
+    }
+    state.isSubmitting = true;
+    battlegroundSubmit.disabled = true;
+    try {
+      const message = readRequiredMessage();
+      const modelA = readRequiredModel(modelASelect, "Choose a model for Model A.");
+      const modelB = readRequiredModel(modelBSelect, "Choose a model for Model B.");
+      validateModelPair(modelA, modelB);
+      lockModelsIfNeeded(modelA, modelB);
+      appendUserTurn(message);
+      appendThinkingMessages();
+      setBattlegroundStatus("Comparing models...");
+      logger.info(
+        "battleground_turn_started model_a=%s model_b=%s history_turns_a=%s history_turns_b=%s",
+        modelA,
+        modelB,
+        state.historyA.length,
+        state.historyB.length
+      );
+      const terminalState = await streamComparison(message, modelA, modelB);
+      const erroredSides = listErroredSides(terminalState);
+      finalizeTurnHistories(terminalState, erroredSides);
+      setBattlegroundStatus(buildCompletionStatus(erroredSides));
+      logger.info("battleground_turn_completed errors=%s", erroredSides.join(","));
+    } catch (error) {
+      removeThinkingMessages();
+      const message = requireErrorMessage(error);
+      setBattlegroundStatus(message);
+      logger.error("battleground_turn_failed error=%s", message);
+    } finally {
+      state.isSubmitting = false;
+      battlegroundSubmit.disabled = false;
+      persistBattlegroundState();
+      renderOutputs();
+    }
   }
 
   function readRequiredMessage() {
@@ -176,12 +317,61 @@
     return model;
   }
 
-  async function streamComparison(payload) {
+  function validateModelPair(modelA, modelB) {
+    if (modelA === modelB) {
+      throw new Error("Model A and Model B must be different.");
+    }
+    if (
+      state.isModelSelectionLocked &&
+      (state.selectedModelA !== modelA || state.selectedModelB !== modelB)
+    ) {
+      throw new Error("Model selection is locked. Start a new battleground chat to change models.");
+    }
+  }
+
+  function lockModelsIfNeeded(modelA, modelB) {
+    if (state.isModelSelectionLocked) {
+      return;
+    }
+    state.selectedModelA = modelA;
+    state.selectedModelB = modelB;
+    state.isModelSelectionLocked = true;
+    applyModelLockState();
+  }
+
+  function applyModelLockState() {
+    modelASelect.disabled = state.isModelSelectionLocked;
+    modelBSelect.disabled = state.isModelSelectionLocked;
+  }
+
+  function appendUserTurn(message) {
+    const userTurn = { role: "user", message };
+    state.historyA.push(userTurn);
+    state.historyB.push(userTurn);
+    state.messagesA.push({ role: "user", text: message });
+    state.messagesB.push({ role: "user", text: message });
+    battlegroundMessage.value = "";
+    persistBattlegroundState();
+    renderOutputs();
+  }
+
+  function appendThinkingMessages() {
+    state.messagesA.push({ role: "thinking", text: "Thinking..." });
+    state.messagesB.push({ role: "thinking", text: "Thinking..." });
+    renderOutputs();
+  }
+
+  function removeThinkingMessages() {
+    state.messagesA = state.messagesA.filter((entry) => entry.role !== "thinking");
+    state.messagesB = state.messagesB.filter((entry) => entry.role !== "thinking");
+  }
+
+  async function streamComparison(message, modelA, modelB) {
     const terminalState = createTerminalState();
     const response = await fetch("/battleground/compare/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(buildComparePayload(message, modelA, modelB)),
     });
     if (!response.ok) {
       const errorPayload = await response.json();
@@ -204,7 +394,24 @@
     buffered += decoder.decode();
     consumeNdjsonBuffer(buffered, true, terminalState);
     assertTerminalStateComplete(terminalState);
-    return listErroredSides(terminalState);
+    return terminalState;
+  }
+
+  function buildComparePayload(message, modelA, modelB) {
+    return {
+      message,
+      history_a: cloneHistory(state.historyA),
+      history_b: cloneHistory(state.historyB),
+      model_a: modelA,
+      model_b: modelB,
+    };
+  }
+
+  function cloneHistory(history) {
+    return history.map((turn) => ({
+      role: turn.role,
+      message: turn.message,
+    }));
   }
 
   function consumeNdjsonBuffer(buffered, allowTrailingLine, terminalState) {
@@ -245,7 +452,6 @@
       throw new Error("battleground event must be an object");
     }
     const side = requireString(event, "side", "battleground event");
-    const outputElement = resolveSideOutput(side);
     const hasChunk = Object.prototype.hasOwnProperty.call(event, "chunk");
     const hasDone = Object.prototype.hasOwnProperty.call(event, "done");
     const hasError = Object.prototype.hasOwnProperty.call(event, "error");
@@ -253,7 +459,9 @@
       throw new Error("battleground event must include exactly one of chunk, done, or error");
     }
     if (hasChunk) {
-      appendOutputLine(outputElement, requireString(event, "chunk", "battleground chunk event"));
+      const chunk = requireString(event, "chunk", "battleground chunk event");
+      const cleanedChunk = upsertStreamingMessage(side, chunk);
+      appendStreamResponse(terminalState, side, cleanedChunk);
       return;
     }
     if (hasDone) {
@@ -261,16 +469,73 @@
         throw new Error("battleground done event must set done=true");
       }
       terminalState[side] = true;
-      appendOutputLine(outputElement, "Done.");
       return;
     }
     terminalState[side] = true;
     markSideAsErrored(terminalState, side);
-    appendOutputLine(outputElement, `Error: ${requireString(event, "error", "battleground error event")}`);
+    upsertErrorMessage(side, requireString(event, "error", "battleground error event"));
+  }
+
+  function upsertStreamingMessage(side, chunk) {
+    const cleanedChunk = removeCitationArtifacts(chunk);
+    if (cleanedChunk === "") {
+      return "";
+    }
+    const sideMessages = getMessagesForSide(side);
+    const lastEntry = getLastEntry(sideMessages);
+    if (lastEntry === null) {
+      sideMessages.push({ role: "assistant", text: cleanedChunk });
+      renderOutputs();
+      return cleanedChunk;
+    }
+    if (lastEntry.role === "thinking") {
+      lastEntry.role = "assistant";
+      lastEntry.text = cleanedChunk;
+      renderOutputs();
+      return cleanedChunk;
+    }
+    if (lastEntry.role === "assistant") {
+      lastEntry.text = `${lastEntry.text}${cleanedChunk}`;
+      renderOutputs();
+      return cleanedChunk;
+    }
+    sideMessages.push({ role: "assistant", text: cleanedChunk });
+    renderOutputs();
+    return cleanedChunk;
+  }
+
+  function upsertErrorMessage(side, errorText) {
+    const sideMessages = getMessagesForSide(side);
+    const lastEntry = getLastEntry(sideMessages);
+    if (lastEntry !== null && ["thinking", "assistant"].includes(lastEntry.role)) {
+      lastEntry.role = "error";
+      lastEntry.text = errorText;
+      renderOutputs();
+      return;
+    }
+    sideMessages.push({ role: "error", text: errorText });
+    renderOutputs();
+  }
+
+  function getMessagesForSide(side) {
+    if (side === "A") {
+      return state.messagesA;
+    }
+    if (side === "B") {
+      return state.messagesB;
+    }
+    throw new Error(`unsupported battleground side: ${side}`);
   }
 
   function createTerminalState() {
-    return { A: false, B: false, errorA: false, errorB: false };
+    return {
+      A: false,
+      B: false,
+      errorA: false,
+      errorB: false,
+      responseA: "",
+      responseB: "",
+    };
   }
 
   function requireTerminalState(terminalState) {
@@ -282,6 +547,9 @@
     }
     if (typeof terminalState.errorA !== "boolean" || typeof terminalState.errorB !== "boolean") {
       throw new Error("terminal state must include boolean errorA and errorB values");
+    }
+    if (typeof terminalState.responseA !== "string" || typeof terminalState.responseB !== "string") {
+      throw new Error("terminal state must include string responseA and responseB values");
     }
   }
 
@@ -310,14 +578,23 @@
     return erroredSides;
   }
 
-  function buildCompletionStatus(erroredSides) {
-    if (!Array.isArray(erroredSides)) {
-      throw new Error("errored sides must be an array");
+  function appendStreamResponse(terminalState, side, cleanedChunk) {
+    requireTerminalState(terminalState);
+    if (typeof cleanedChunk !== "string") {
+      throw new Error("cleaned stream chunk must be a string");
     }
-    if (erroredSides.length === 0) {
-      return "Comparison complete.";
+    if (cleanedChunk === "") {
+      return;
     }
-    return `Comparison complete with side errors on: ${erroredSides.join(", ")}.`;
+    if (side === "A") {
+      terminalState.responseA = `${terminalState.responseA}${cleanedChunk}`;
+      return;
+    }
+    if (side === "B") {
+      terminalState.responseB = `${terminalState.responseB}${cleanedChunk}`;
+      return;
+    }
+    throw new Error(`unsupported battleground side: ${side}`);
   }
 
   function assertTerminalStateComplete(terminalState) {
@@ -334,25 +611,120 @@
     }
   }
 
-  function resolveSideOutput(side) {
-    if (side === "A") {
-      return modelAOutput;
+  function finalizeTurnHistories(terminalState, erroredSides) {
+    requireTerminalState(terminalState);
+    removeThinkingMessages();
+    if (erroredSides.includes("A")) {
+      logger.info("battleground_side_history_skipped side=A reason=error");
+    } else {
+      state.historyA.push({
+        role: "assistant",
+        message: requireAssistantResponse(terminalState.responseA, "A"),
+      });
     }
-    if (side === "B") {
-      return modelBOutput;
+    if (erroredSides.includes("B")) {
+      logger.info("battleground_side_history_skipped side=B reason=error");
+    } else {
+      state.historyB.push({
+        role: "assistant",
+        message: requireAssistantResponse(terminalState.responseB, "B"),
+      });
     }
-    throw new Error(`unsupported battleground side: ${side}`);
+    persistBattlegroundState();
+    renderOutputs();
   }
 
-  function appendOutputLine(outputElement, lineText) {
-    if (typeof lineText !== "string") {
-      throw new Error("battleground output line must be a string");
+  function requireAssistantResponse(responseText, side) {
+    if (typeof responseText !== "string") {
+      throw new Error(`assistant response for side ${side} must be a string`);
     }
-    if (outputElement.textContent === "") {
-      outputElement.textContent = lineText;
-      return;
+    const assistantMessage = responseText.trim();
+    if (assistantMessage === "") {
+      throw new Error(`assistant response for side ${side} must not be empty`);
     }
-    outputElement.textContent = `${outputElement.textContent}\n${lineText}`;
+    return assistantMessage;
+  }
+
+  function buildCompletionStatus(erroredSides) {
+    if (!Array.isArray(erroredSides)) {
+      throw new Error("errored sides must be an array");
+    }
+    if (erroredSides.length === 0) {
+      return "Turn complete.";
+    }
+    return `Turn complete with side errors on: ${erroredSides.join(", ")}.`;
+  }
+
+  function renderOutputs() {
+    modelAOutput.textContent = renderSideLines("A").join("\n");
+    modelBOutput.textContent = renderSideLines("B").join("\n");
+  }
+
+  function renderSideLines(side) {
+    const messages = getMessagesForSide(side);
+    return messages.map((entry) => {
+      if (entry.role === "user") {
+        return `You: ${entry.text}`;
+      }
+      if (entry.role === "assistant") {
+        return `Model ${side}: ${entry.text}`;
+      }
+      if (entry.role === "thinking") {
+        return `Model ${side}: Thinking...`;
+      }
+      if (entry.role === "error") {
+        return `Error: ${entry.text}`;
+      }
+      throw new Error(`unsupported battleground message role: ${entry.role}`);
+    });
+  }
+
+  function persistBattlegroundState() {
+    const payload = {
+      selectedModelA: state.selectedModelA,
+      selectedModelB: state.selectedModelB,
+      isModelSelectionLocked: state.isModelSelectionLocked,
+      historyA: cloneHistory(state.historyA),
+      historyB: cloneHistory(state.historyB),
+      messagesA: clonePersistableMessages(state.messagesA),
+      messagesB: clonePersistableMessages(state.messagesB),
+    };
+    localStorage.setItem(BATTLEGROUND_STORAGE_KEY, JSON.stringify(payload));
+  }
+
+  function clonePersistableMessages(messages) {
+    return messages
+      .filter((entry) => entry.role !== "thinking")
+      .map((entry) => ({ role: entry.role, text: entry.text }));
+  }
+
+  function getLastEntry(messages) {
+    if (!Array.isArray(messages)) {
+      throw new Error("message collection must be an array");
+    }
+    if (messages.length === 0) {
+      return null;
+    }
+    return messages[messages.length - 1];
+  }
+
+  function handleClearBattlegroundChat() {
+    logger.info("battleground_chat_reset_started");
+    state.selectedModelA = "";
+    state.selectedModelB = "";
+    state.isModelSelectionLocked = false;
+    state.historyA = [];
+    state.historyB = [];
+    state.messagesA = [];
+    state.messagesB = [];
+    state.isSubmitting = false;
+    modelASelect.value = "";
+    modelBSelect.value = "";
+    applyModelLockState();
+    persistBattlegroundState();
+    renderOutputs();
+    setBattlegroundStatus("Started a new battleground chat.");
+    logger.info("battleground_chat_reset_completed");
   }
 
   function setBattlegroundStatus(message) {

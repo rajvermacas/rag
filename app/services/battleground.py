@@ -63,40 +63,45 @@ class BattlegroundService:
     async def compare_stream(
         self,
         question: str,
-        history: list[ConversationTurn],
+        history_a: list[ConversationTurn],
+        history_b: list[ConversationTurn],
         model_a: str,
         model_b: str,
     ) -> AsyncIterator[CompareStreamEvent]:
         normalized_model_a, normalized_model_b = _validate_compare_inputs(
             question, model_a, model_b, self._allowed_models
         )
-        _validate_history(history)
+        _validate_history(history_a)
+        _validate_history(history_b)
+        _validate_user_turn_sequences(history_a, history_b)
         documents = self._document_service.list_documents()
         logger.info(
-            "battleground_compare_started question_length=%s history_turns=%s model_a=%s "
-            "model_b=%s available_documents=%s",
+            "battleground_compare_started question_length=%s history_turns_a=%s "
+            "history_turns_b=%s model_a=%s model_b=%s available_documents=%s",
             len(question),
-            len(history),
+            len(history_a),
+            len(history_b),
             normalized_model_a,
             normalized_model_b,
             len(documents),
         )
-        retrieval_query = _build_retrieval_query(question, history)
+        retrieval_query = _build_retrieval_query(question, _extract_user_turn_history(history_a))
         chunks = await self._retrieve_chunks_or_empty(retrieval_query)
         system_prompt = _build_system_prompt(len(chunks) > 0)
-        user_prompt = _build_user_prompt(question, history, chunks, documents)
+        user_prompt_a = _build_user_prompt(question, history_a, chunks, documents)
+        user_prompt_b = _build_user_prompt(question, history_b, chunks, documents)
         queue: asyncio.Queue[CompareStreamEvent] = asyncio.Queue(
             maxsize=_COMPARE_STREAM_QUEUE_MAXSIZE
         )
         tasks = [
             asyncio.create_task(
                 self._stream_model_side(
-                    "A", normalized_model_a, system_prompt, user_prompt, queue
+                    "A", normalized_model_a, system_prompt, user_prompt_a, queue
                 )
             ),
             asyncio.create_task(
                 self._stream_model_side(
-                    "B", normalized_model_b, system_prompt, user_prompt, queue
+                    "B", normalized_model_b, system_prompt, user_prompt_b, queue
                 )
             ),
         ]
@@ -220,3 +225,23 @@ def _is_current_task_cancellation(exc: BaseException) -> bool:
     if task is None:
         return False
     return task.cancelling() > 0
+
+
+def _validate_user_turn_sequences(
+    history_a: list[ConversationTurn], history_b: list[ConversationTurn]
+) -> None:
+    user_turns_a = _extract_user_turns(history_a)
+    user_turns_b = _extract_user_turns(history_b)
+    if user_turns_a != user_turns_b:
+        raise ValueError(
+            "history_a and history_b must include identical user turns in the same order"
+        )
+
+
+def _extract_user_turn_history(history: list[ConversationTurn]) -> list[ConversationTurn]:
+    user_turns = [turn for turn in history if turn.role == "user"]
+    return user_turns
+
+
+def _extract_user_turns(history: list[ConversationTurn]) -> list[str]:
+    return [turn.message for turn in history if turn.role == "user"]

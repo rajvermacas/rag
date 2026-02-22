@@ -213,6 +213,7 @@ def test_index_page_has_chat_and_battleground_scaffolds(
     assert 'id="nav-chat"' in html
     assert 'id="nav-battleground"' in html
     assert 'id="battleground-form"' in html
+    assert 'id="clear-battleground-chat"' in html
     assert 'id="model-a-select"' in html
     assert 'id="model-b-select"' in html
     assert 'id="documents-list"' in html

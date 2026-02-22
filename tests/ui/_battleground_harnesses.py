@@ -9,7 +9,7 @@ const battlegroundScript = __BATTLEGROUND_SCRIPT__;
 const windowListeners = new Map();
 const fetchCalls = [];
 const readSnapshots = [];
-
+const localStorageRecords = new Map();
 function createOptionElement() {
   let textValue = "";
   return {
@@ -22,7 +22,6 @@ function createOptionElement() {
     set textContent(value) { textValue = String(value); },
   };
 }
-
 function createElement(id, tagName = "div") {
   const listeners = new Map();
   const attributes = new Map();
@@ -107,7 +106,6 @@ function createElement(id, tagName = "div") {
   });
   return element;
 }
-
 function createSelectWithPlaceholder(id, placeholderLabel) {
   const select = createElement(id, "select");
   const placeholder = createOptionElement();
@@ -126,6 +124,7 @@ const elements = {
   "battleground-section": createElement("battleground-section", "section"),
   "battleground-form": createElement("battleground-form", "form"),
   "battleground-submit": createElement("battleground-submit", "button"),
+  "clear-battleground-chat": createElement("clear-battleground-chat", "button"),
   "model-a-select": createSelectWithPlaceholder("model-a-select", "Select model A"),
   "model-b-select": createSelectWithPlaceholder("model-b-select", "Select model B"),
   "battleground-message": createElement("battleground-message", "textarea"),
@@ -137,13 +136,7 @@ elements["chat-section"].className = "";
 elements["battleground-section"].className = "hidden";
 elements["nav-chat"].setAttribute("aria-selected", "true");
 elements["nav-battleground"].setAttribute("aria-selected", "false");
-
 const encoder = new TextEncoder();
-const streamChunks = [
-  encoder.encode("{\\"side\\":\\"A\\",\\"chunk\\":\\"A says hi\\"}\\n"),
-  encoder.encode("{\\"side\\":\\"B\\",\\"chunk\\":\\"B says hi\\"}\\n{\\"side\\":\\"A\\",\\"done\\":true}\\n"),
-  encoder.encode("{\\"side\\":\\"B\\",\\"error\\":\\"B failed\\"}\\n"),
-];
 
 globalThis.window = globalThis;
 globalThis.console = { info: () => undefined, error: () => undefined, log: () => undefined };
@@ -156,6 +149,10 @@ globalThis.document = {
 };
 globalThis.marked = { setOptions: () => undefined, parse: (value) => value };
 globalThis.DOMPurify = { sanitize: (value) => value };
+globalThis.localStorage = {
+  getItem: (key) => (localStorageRecords.has(key) ? localStorageRecords.get(key) : null),
+  setItem: (key, value) => localStorageRecords.set(key, value),
+};
 globalThis.addEventListener = (eventName, handler) => {
   if (!windowListeners.has(eventName)) windowListeners.set(eventName, []);
   windowListeners.get(eventName).push(handler);
@@ -175,6 +172,17 @@ globalThis.fetch = async (url, options = {}) => {
     };
   }
   if (url === "/battleground/compare/stream") {
+    const postIndex = fetchCalls.filter((call) => call.url === "/battleground/compare/stream").length;
+    const streamChunks = postIndex === 1
+      ? [
+          encoder.encode("{\\"side\\":\\"A\\",\\"chunk\\":\\"A says hi\\"}\\n"),
+          encoder.encode("{\\"side\\":\\"B\\",\\"chunk\\":\\"B says hi\\"}\\n"),
+          encoder.encode("{\\"side\\":\\"A\\",\\"done\\":true}\\n{\\"side\\":\\"B\\",\\"done\\":true}\\n"),
+        ]
+      : [
+          encoder.encode("{\\"side\\":\\"A\\",\\"chunk\\":\\"A follow up\\"}\\n"),
+          encoder.encode("{\\"side\\":\\"B\\",\\"error\\":\\"B failed\\"}\\n{\\"side\\":\\"A\\",\\"done\\":true}\\n"),
+        ];
     let chunkIndex = 0;
     return {
       ok: true,
@@ -202,7 +210,6 @@ globalThis.fetch = async (url, options = {}) => {
   }
   throw new Error(`unexpected fetch url: ${url}`);
 };
-
 eval(commonScript);
 eval(battlegroundScript);
 for (const handler of windowListeners.get("load") || []) {
@@ -211,7 +218,6 @@ for (const handler of windowListeners.get("load") || []) {
 for (let i = 0; i < 10 && elements["model-a-select"].options.length < 3; i += 1) {
   await Promise.resolve();
 }
-
 elements["nav-battleground"].click();
 const afterBattlegroundTab = {
   chatHidden: elements["chat-section"].classList.contains("hidden"),
@@ -226,19 +232,27 @@ const afterChatTab = {
   chatSelected: elements["nav-chat"].getAttribute("aria-selected"),
   battlegroundSelected: elements["nav-battleground"].getAttribute("aria-selected"),
 };
-
 elements["model-a-select"].value = "openai/gpt-4o-mini";
 elements["model-b-select"].value = "anthropic/claude-3.5-sonnet";
 elements["battleground-message"].value = "Which answer is better?";
 await elements["battleground-form"].submit();
+const modelSelectStateAfterFirstTurn = {
+  modelADisabled: elements["model-a-select"].disabled,
+  modelBDisabled: elements["model-b-select"].disabled,
+};
+elements["battleground-message"].value = "Give me a short follow-up";
+await elements["battleground-form"].submit();
 
+const persistedState = JSON.parse(localStorageRecords.get("rag-battleground-state"));
 process.stdout.write(JSON.stringify({
   modelAOptions: elements["model-a-select"].options.map((option) => option.value),
   modelBOptions: elements["model-b-select"].options.map((option) => option.value),
   fetchCalls,
   readSnapshots,
-  modelAOutput: elements["battleground-model-a-output"].textContent,
-  modelBOutput: elements["battleground-model-b-output"].textContent,
+  modelAOutput: elements["battleground-model-a-output"].textContent.split("\\n").filter((line) => line !== ""),
+  modelBOutput: elements["battleground-model-b-output"].textContent.split("\\n").filter((line) => line !== ""),
+  modelSelectStateAfterFirstTurn,
+  persistedState,
   finalStatus: elements["battleground-status"].textContent,
   afterBattlegroundTab,
   afterChatTab,
@@ -248,7 +262,6 @@ process.stdout.write(JSON.stringify({
   process.exit(1);
 });
 """
-
 _BATTLEGROUND_VALIDATION_HARNESS_TEMPLATE = """
 (async () => {
 const commonScript = __COMMON_SCRIPT__;
@@ -343,6 +356,7 @@ const elements = {
   "battleground-section": createElement("battleground-section", "section"),
   "battleground-form": createElement("battleground-form", "form"),
   "battleground-submit": createElement("battleground-submit", "button"),
+  "clear-battleground-chat": createElement("clear-battleground-chat", "button"),
   "model-a-select": createSelectWithPlaceholder("model-a-select", "Select model A"),
   "model-b-select": createSelectWithPlaceholder("model-b-select", "Select model B"),
   "battleground-message": createElement("battleground-message", "textarea"),
@@ -366,6 +380,11 @@ globalThis.document = {
 };
 globalThis.marked = { setOptions: () => undefined, parse: (value) => value };
 globalThis.DOMPurify = { sanitize: (value) => value };
+const localStorageRecords = new Map();
+globalThis.localStorage = {
+  getItem: (key) => (localStorageRecords.has(key) ? localStorageRecords.get(key) : null),
+  setItem: (key, value) => localStorageRecords.set(key, value),
+};
 globalThis.addEventListener = () => undefined;
 globalThis.fetch = async (url, options = {}) => {
   const method = typeof options.method === "string" ? options.method : "GET";
@@ -425,7 +444,6 @@ process.stdout.write(JSON.stringify({
   process.exit(1);
 });
 """
-
 _BATTLEGROUND_BOOTSTRAP_FAILURE_HARNESS_TEMPLATE = """
 (async () => {
 const commonScript = __COMMON_SCRIPT__;
@@ -514,6 +532,7 @@ const elements = {
   "battleground-section": createElement("battleground-section", "section"),
   "battleground-form": createElement("battleground-form", "form"),
   "battleground-submit": createElement("battleground-submit", "button"),
+  "clear-battleground-chat": createElement("clear-battleground-chat", "button"),
   "model-a-select": createSelectWithPlaceholder("model-a-select", "Select model A"),
   "model-b-select": createSelectWithPlaceholder("model-b-select", "Select model B"),
   "battleground-message": createElement("battleground-message", "textarea"),
@@ -539,6 +558,11 @@ globalThis.document = {
 };
 globalThis.marked = { setOptions: () => undefined, parse: (value) => value };
 globalThis.DOMPurify = { sanitize: (value) => value };
+const localStorageRecords = new Map();
+globalThis.localStorage = {
+  getItem: (key) => (localStorageRecords.has(key) ? localStorageRecords.get(key) : null),
+  setItem: (key, value) => localStorageRecords.set(key, value),
+};
 globalThis.addEventListener = () => undefined;
 globalThis.fetch = async (url) => {
   if (url === "/models/battleground") {
@@ -566,7 +590,6 @@ process.stdout.write(JSON.stringify({
   process.exit(1);
 });
 """
-
 _BATTLEGROUND_TRUNCATED_STREAM_HARNESS_TEMPLATE = """
 (async () => {
 const commonScript = __COMMON_SCRIPT__;
@@ -660,6 +683,7 @@ const elements = {
   "battleground-section": createElement("battleground-section", "section"),
   "battleground-form": createElement("battleground-form", "form"),
   "battleground-submit": createElement("battleground-submit", "button"),
+  "clear-battleground-chat": createElement("clear-battleground-chat", "button"),
   "model-a-select": createSelectWithPlaceholder("model-a-select", "Select model A"),
   "model-b-select": createSelectWithPlaceholder("model-b-select", "Select model B"),
   "battleground-message": createElement("battleground-message", "textarea"),
@@ -679,6 +703,11 @@ globalThis.document = {
 };
 globalThis.marked = { setOptions: () => undefined, parse: (value) => value };
 globalThis.DOMPurify = { sanitize: (value) => value };
+const localStorageRecords = new Map();
+globalThis.localStorage = {
+  getItem: (key) => (localStorageRecords.has(key) ? localStorageRecords.get(key) : null),
+  setItem: (key, value) => localStorageRecords.set(key, value),
+};
 globalThis.addEventListener = () => undefined;
 globalThis.fetch = async (url, options = {}) => {
   if (url === "/models/battleground") {
@@ -725,16 +754,14 @@ await elements["battleground-form"].submit();
 
 process.stdout.write(JSON.stringify({
   finalStatus: elements["battleground-status"].textContent,
-  modelAOutput: elements["battleground-model-a-output"].textContent,
-  modelBOutput: elements["battleground-model-b-output"].textContent,
+  modelAOutput: elements["battleground-model-a-output"].textContent.split("\\n").filter((line) => line !== ""),
+  modelBOutput: elements["battleground-model-b-output"].textContent.split("\\n").filter((line) => line !== ""),
 }));
 })().catch((error) => {
   process.stderr.write(String(error));
   process.exit(1);
 });
 """
-
-
 def _run_node_harness(harness: str, context: str) -> str:
     node_path = shutil.which("node")
     if node_path is None:
@@ -750,8 +777,6 @@ def _run_node_harness(harness: str, context: str) -> str:
         error_output = completed.stderr.strip()
         raise RuntimeError(f"node harness failed for {context}: {error_output}")
     return completed.stdout
-
-
 def _run_battleground_harness(
     common_script: str,
     battleground_script: str,
@@ -765,4 +790,3 @@ def _run_battleground_harness(
     if not isinstance(payload, dict):
         raise RuntimeError(f"node harness output for {context} must be an object")
     return payload
-

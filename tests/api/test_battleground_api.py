@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 import app.main as main_module
 from app.main import AppServices, create_app
 from app.services.battleground import CompareStreamEvent
+from app.services.chat import ConversationTurn
 
 
 class FakeIngestService:
@@ -33,10 +34,25 @@ class FakeDocumentService:
 
 
 class FakeBattlegroundService:
-    async def compare_stream(self, question: str, history, model_a: str, model_b: str):
+    async def compare_stream(
+        self,
+        question: str,
+        history_a: list[ConversationTurn],
+        history_b: list[ConversationTurn],
+        model_a: str,
+        model_b: str,
+    ):
         assert question == "What is revenue?"
         assert model_a == "openai/gpt-4o-mini"
         assert model_b == "anthropic/claude-3.5-sonnet"
+        assert [turn.message for turn in history_a] == [
+            "Earlier message",
+            "Earlier answer from A",
+        ]
+        assert [turn.message for turn in history_b] == [
+            "Earlier message",
+            "Earlier answer from B",
+        ]
         yield CompareStreamEvent(side="A", kind="chunk", chunk="A1", error=None)
         yield CompareStreamEvent(side="B", kind="chunk", chunk="B1", error=None)
         yield CompareStreamEvent(side="A", kind="done", chunk=None, error=None)
@@ -44,19 +60,25 @@ class FakeBattlegroundService:
 
 
 class FakeBattlegroundValidationErrorService:
-    async def compare_stream(self, question: str, history, model_a: str, model_b: str):
+    async def compare_stream(
+        self, question: str, history_a, history_b, model_a: str, model_b: str
+    ):
         raise ValueError("model_a and model_b must be different")
         yield CompareStreamEvent(side="A", kind="done", chunk=None, error=None)
 
 
 class FakeBattlegroundDisallowedModelService:
-    async def compare_stream(self, question: str, history, model_a: str, model_b: str):
+    async def compare_stream(
+        self, question: str, history_a, history_b, model_a: str, model_b: str
+    ):
         raise ValueError("model_a is not allowed")
         yield CompareStreamEvent(side="A", kind="done", chunk=None, error=None)
 
 
 class FakeBattlegroundMustNotBeCalledService:
-    async def compare_stream(self, question: str, history, model_a: str, model_b: str):
+    async def compare_stream(
+        self, question: str, history_a, history_b, model_a: str, model_b: str
+    ):
         raise AssertionError("Battleground service should not be called for invalid payload")
         yield CompareStreamEvent(side="A", kind="done", chunk=None, error=None)
 
@@ -64,7 +86,14 @@ class FakeBattlegroundMustNotBeCalledService:
 def _valid_compare_payload() -> dict:
     return {
         "message": "What is revenue?",
-        "history": [{"role": "user", "message": "Earlier message"}],
+        "history_a": [
+            {"role": "user", "message": "Earlier message"},
+            {"role": "assistant", "message": "Earlier answer from A"},
+        ],
+        "history_b": [
+            {"role": "user", "message": "Earlier message"},
+            {"role": "assistant", "message": "Earlier answer from B"},
+        ],
         "model_a": "openai/gpt-4o-mini",
         "model_b": "anthropic/claude-3.5-sonnet",
     }
@@ -113,7 +142,14 @@ def test_compare_stream_returns_tagged_ndjson_events(
         "/battleground/compare/stream",
         json={
             "message": "What is revenue?",
-            "history": [{"role": "user", "message": "Earlier message"}],
+            "history_a": [
+                {"role": "user", "message": "Earlier message"},
+                {"role": "assistant", "message": "Earlier answer from A"},
+            ],
+            "history_b": [
+                {"role": "user", "message": "Earlier message"},
+                {"role": "assistant", "message": "Earlier answer from B"},
+            ],
             "model_a": "openai/gpt-4o-mini",
             "model_b": "anthropic/claude-3.5-sonnet",
         },
@@ -233,7 +269,9 @@ def test_compare_stream_returns_400_when_battleground_service_construction_fails
     }
 
 
-@pytest.mark.parametrize("missing_field", ["message", "history", "model_a", "model_b"])
+@pytest.mark.parametrize(
+    "missing_field", ["message", "history_a", "history_b", "model_a", "model_b"]
+)
 def test_compare_stream_returns_400_for_missing_required_fields(
     required_env: None, monkeypatch: pytest.MonkeyPatch, missing_field: str
 ) -> None:
@@ -246,6 +284,21 @@ def test_compare_stream_returns_400_for_missing_required_fields(
     assert response.status_code == 400
     assert response.json() == {
         "detail": f"invalid battleground compare payload: {missing_field} is required"
+    }
+
+
+def test_compare_stream_returns_400_for_mismatched_user_turn_sequences(
+    required_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = _build_client(monkeypatch, FakeBattlegroundMustNotBeCalledService())
+    payload = _valid_compare_payload()
+    payload["history_b"][0]["message"] = "Different user turn"
+
+    response = client.post("/battleground/compare/stream", json=payload)
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "detail": "history_a and history_b must include identical user turns in the same order"
     }
 
 

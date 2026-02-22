@@ -54,7 +54,8 @@ class ChatResponse(BaseModel):
 
 class BattlegroundCompareRequest(BaseModel):
     message: str
-    history: list[ChatHistoryTurn]
+    history_a: list[ChatHistoryTurn]
+    history_b: list[ChatHistoryTurn]
     model_a: str
     model_b: str
 
@@ -97,7 +98,8 @@ class BattlegroundCompareService(Protocol):
     def compare_stream(
         self,
         question: str,
-        history: list[ConversationTurn],
+        history_a: list[ConversationTurn],
+        history_b: list[ConversationTurn],
         model_a: str,
         model_b: str,
     ) -> AsyncIterator[CompareStreamEvent]:
@@ -373,20 +375,25 @@ def _register_battleground_routes(
     @app.post("/battleground/compare/stream")
     async def battleground_compare_stream(payload: BattlegroundCompareRequest) -> StreamingResponse:
         logger.info(
-            "battleground_compare_stream_endpoint_called message_length=%s history_turns=%s "
+            "battleground_compare_stream_endpoint_called message_length=%s history_turns_a=%s "
+            "history_turns_b=%s "
             "model_a=%s model_b=%s",
             len(payload.message),
-            len(payload.history),
+            len(payload.history_a),
+            len(payload.history_b),
             payload.model_a,
             payload.model_b,
         )
-        history = _to_conversation_history(payload.history)
+        history_a = _to_conversation_history(payload.history_a)
+        history_b = _to_conversation_history(payload.history_b)
         try:
+            _validate_battleground_user_turn_sequences(history_a, history_b)
             battleground_service = _build_battleground_service(services, settings)
             stream = await _prime_battleground_stream(
                 battleground_service.compare_stream(
                     question=payload.message,
-                    history=history,
+                    history_a=history_a,
+                    history_b=history_b,
                     model_a=payload.model_a,
                     model_b=payload.model_b,
                 )
@@ -401,6 +408,21 @@ def _register_battleground_routes(
 
 def _to_conversation_history(history: list[ChatHistoryTurn]) -> list[ConversationTurn]:
     return [ConversationTurn(role=turn.role, message=turn.message) for turn in history]
+
+
+def _validate_battleground_user_turn_sequences(
+    history_a: list[ConversationTurn], history_b: list[ConversationTurn]
+) -> None:
+    user_turns_a = _extract_user_turns(history_a)
+    user_turns_b = _extract_user_turns(history_b)
+    if user_turns_a != user_turns_b:
+        raise ValueError(
+            "history_a and history_b must include identical user turns in the same order"
+        )
+
+
+def _extract_user_turns(history: list[ConversationTurn]) -> list[str]:
+    return [turn.message for turn in history if turn.role == "user"]
 
 
 async def _stream_chat_chunks(stream: AsyncIterator[str]) -> AsyncIterator[str]:

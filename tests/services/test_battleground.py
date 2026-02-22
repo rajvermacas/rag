@@ -119,7 +119,14 @@ def _collect_events(service: BattlegroundService, question: str) -> list:
     async def collect() -> list:
         stream = service.compare_stream(
             question=question,
-            history=[ConversationTurn(role="user", message="Earlier message")],
+            history_a=[
+                ConversationTurn(role="user", message="Earlier message"),
+                ConversationTurn(role="assistant", message="Earlier answer from A"),
+            ],
+            history_b=[
+                ConversationTurn(role="user", message="Earlier message"),
+                ConversationTurn(role="assistant", message="Earlier answer from B"),
+            ],
             model_a="model-a",
             model_b="model-b",
         )
@@ -146,7 +153,9 @@ def test_compare_stream_retrieves_once_and_tags_sides() -> None:
     assert "Current question:" in retrieval.last_query
     assert len(chat_client.calls) == 2
     assert chat_client.calls[0][1] == chat_client.calls[1][1]
-    assert chat_client.calls[0][2] == chat_client.calls[1][2]
+    assert chat_client.calls[0][2] != chat_client.calls[1][2]
+    assert "Earlier answer from A" in chat_client.calls[0][2]
+    assert "Earlier answer from B" in chat_client.calls[1][2]
 
     chunk_sides = {event.side for event in events if event.kind == "chunk"}
     done_sides = {event.side for event in events if event.kind == "done"}
@@ -166,7 +175,8 @@ def test_compare_stream_validation_errors_fail_fast() -> None:
     async def collect_invalid(question: str, model_a: str, model_b: str) -> list:
         stream = service.compare_stream(
             question=question,
-            history=[],
+            history_a=[],
+            history_b=[],
             model_a=model_a,
             model_b=model_b,
         )
@@ -231,7 +241,8 @@ def test_compare_stream_handles_cancelled_side_without_deadlock() -> None:
     async def collect() -> list:
         stream = service.compare_stream(
             question="What is revenue?",
-            history=[],
+            history_a=[],
+            history_b=[],
             model_a="model-a",
             model_b="model-b",
         )
@@ -255,7 +266,8 @@ def test_compare_stream_handles_base_exception_side_without_deadlock() -> None:
     async def collect() -> list:
         stream = service.compare_stream(
             question="What is revenue?",
-            history=[],
+            history_a=[],
+            history_b=[],
             model_a="model-a",
             model_b="model-b",
         )
@@ -279,7 +291,8 @@ def test_compare_stream_normalizes_allowed_models_for_membership_checks() -> Non
     async def collect() -> list:
         stream = service.compare_stream(
             question="What is revenue?",
-            history=[],
+            history_a=[],
+            history_b=[],
             model_a="model-a",
             model_b="model-b",
         )
@@ -287,3 +300,28 @@ def test_compare_stream_normalizes_allowed_models_for_membership_checks() -> Non
 
     events = asyncio.run(collect())
     assert len(events) > 0
+
+
+def test_compare_stream_rejects_mismatched_user_turn_sequences() -> None:
+    service = BattlegroundService(
+        retrieval_service=FakeRetrievalService(_sample_chunks()),
+        chat_client=FakeChatClient(),
+        document_service=FakeDocumentService(),
+        allowed_models=("model-a", "model-b"),
+    )
+
+    async def collect() -> list:
+        stream = service.compare_stream(
+            question="What is revenue?",
+            history_a=[ConversationTurn(role="user", message="turn one")],
+            history_b=[ConversationTurn(role="user", message="different turn one")],
+            model_a="model-a",
+            model_b="model-b",
+        )
+        return [event async for event in stream]
+
+    with pytest.raises(
+        ValueError,
+        match="history_a and history_b must include identical user turns in the same order",
+    ):
+        asyncio.run(collect())

@@ -132,7 +132,7 @@
     >
       <article class="rounded-xl border border-zinc-200 bg-zinc-50 p-4">
         <h2 class="text-lg font-bold text-zinc-950">Model Battleground</h2>
-        <p class="mt-1 text-sm text-zinc-600">Compare two models on the same grounded question.</p>
+        <p class="mt-1 text-sm text-zinc-600">Run a continuous side-by-side conversation across two selected models.</p>
 
         <form id="battleground-form" class="mt-4 space-y-3">
           <div>
@@ -160,7 +160,7 @@
             <textarea
               id="battleground-message"
               class="mt-1 min-h-28 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none transition focus:border-red-500 focus:ring-2 focus:ring-red-500/20"
-              placeholder="Ask one question and compare both models side by side..."
+              placeholder="Ask a question to both models..."
               required
             ></textarea>
           </div>
@@ -169,22 +169,29 @@
             class="inline-flex w-full items-center justify-center rounded-lg border border-zinc-900 bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-800"
             type="submit"
           >
-            Start Comparison
+            Send to Both Models
+          </button>
+          <button
+            id="clear-battleground-chat"
+            class="inline-flex w-full items-center justify-center rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-700 transition hover:border-red-500 hover:text-red-600"
+            type="button"
+          >
+            New Battleground Chat
           </button>
         </form>
         <p id="battleground-status" class="mt-3 text-xs text-zinc-600"></p>
       </article>
 
       <article class="rounded-xl border border-zinc-200 bg-white p-4">
-        <h3 class="text-sm font-bold uppercase tracking-wide text-zinc-700">Comparison Output</h3>
+        <h3 class="text-sm font-bold uppercase tracking-wide text-zinc-700">Conversation Output</h3>
         <div class="mt-3 grid gap-3 md:grid-cols-2">
           <section class="rounded-xl border border-zinc-200 bg-zinc-50 p-3">
             <h4 class="text-sm font-semibold text-zinc-900">Model A</h4>
-            <div id="battleground-model-a-output" class="mt-2 min-h-56 text-sm text-zinc-700"></div>
+            <div id="battleground-model-a-output" class="mt-2 min-h-56 max-h-[30rem] overflow-y-auto whitespace-pre-wrap text-sm text-zinc-700"></div>
           </section>
           <section class="rounded-xl border border-zinc-200 bg-zinc-50 p-3">
             <h4 class="text-sm font-semibold text-zinc-900">Model B</h4>
-            <div id="battleground-model-b-output" class="mt-2 min-h-56 text-sm text-zinc-700"></div>
+            <div id="battleground-model-b-output" class="mt-2 min-h-56 max-h-[30rem] overflow-y-auto whitespace-pre-wrap text-sm text-zinc-700"></div>
           </section>
         </div>
       </article>
