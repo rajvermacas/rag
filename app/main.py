@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 import json
 import logging
+import warnings
 from typing import Any, AsyncIterator, Protocol
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
@@ -14,6 +15,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, field_validator
+from pydantic.warnings import UnsupportedFieldAttributeWarning
 
 from app.constants import OPENROUTER_API_BASE_URL
 from app.config import Settings, load_environment_from_dotenv
@@ -316,6 +318,25 @@ class _LlamaIndexQueryEngineFactory:
             streaming=True,
         )
 
+    def has_indexed_documents(self) -> bool:
+        document_count = self._collection.count()
+        if not isinstance(document_count, int) or document_count < 0:
+            raise ValueError("chroma collection count must be a non-negative integer")
+        logger.info("query_engine_factory_documents_count count=%s", document_count)
+        return document_count > 0
+
+
+def _ignore_known_llamaindex_validate_default_warning() -> None:
+    logger.debug("suppressing_known_llamaindex_validate_default_warning")
+    warnings.filterwarnings(
+        "ignore",
+        message=(
+            r"The 'validate_default' attribute with value True was provided to the "
+            r"`Field\(\)` function, which has no effect in the context it was used\..*"
+        ),
+        category=UnsupportedFieldAttributeWarning,
+    )
+
 
 def _build_chroma_collection(persist_dir: str, collection_name: str) -> Any:
     try:
@@ -328,7 +349,9 @@ def _build_chroma_collection(persist_dir: str, collection_name: str) -> Any:
 
 def _build_openrouter_embedding_model(api_key: str, embed_model: str) -> Any:
     try:
-        from llama_index.embeddings.openai import OpenAIEmbedding
+        with warnings.catch_warnings():
+            _ignore_known_llamaindex_validate_default_warning()
+            from llama_index.embeddings.openai import OpenAIEmbedding
     except ModuleNotFoundError as exc:
         raise RuntimeError(
             "Missing dependency for app wiring: llama-index-embeddings-openai"
@@ -348,8 +371,10 @@ def _build_llamaindex_query_engine(
     streaming: bool,
 ) -> Any:
     try:
-        from llama_index.core import VectorStoreIndex
-        from llama_index.vector_stores.chroma import ChromaVectorStore
+        with warnings.catch_warnings():
+            _ignore_known_llamaindex_validate_default_warning()
+            from llama_index.core import VectorStoreIndex
+            from llama_index.vector_stores.chroma import ChromaVectorStore
     except ModuleNotFoundError as exc:
         raise RuntimeError("Missing dependency for app wiring: llama-index") from exc
     vector_store = ChromaVectorStore(chroma_collection=collection)
@@ -691,7 +716,6 @@ def _require_allowed_chat_model_option(
             return option
     raise ValueError("model is not allowed for backend_id")
 
-
 def _validate_distinct_battleground_model_choices(
     model_option_a: ChatModelOption,
     model_option_b: ChatModelOption,
@@ -702,7 +726,6 @@ def _validate_distinct_battleground_model_choices(
     ):
         raise ValueError("model_a and model_b must be different")
 
-
 async def _stream_chat_chunks(stream: AsyncIterator[str]) -> AsyncIterator[str]:
     chunk_count = 0
     async for chunk in stream:
@@ -711,7 +734,6 @@ async def _stream_chat_chunks(stream: AsyncIterator[str]) -> AsyncIterator[str]:
         chunk_count += 1
         yield chunk
     logger.info("chat_stream_completed chunk_count=%s", chunk_count)
-
 
 async def _resolve_chat_stream(stream_or_awaitable: Any) -> AsyncIterator[str]:
     if hasattr(stream_or_awaitable, "__aiter__"):
@@ -722,7 +744,6 @@ async def _resolve_chat_stream(stream_or_awaitable: Any) -> AsyncIterator[str]:
             raise ValueError("chat stream resolver expected an async iterator")
         return resolved_stream
     raise ValueError("chat stream resolver expected an awaitable or async iterator")
-
 
 async def _prime_battleground_stream(
     stream: AsyncIterator[CompareStreamEvent],

@@ -36,6 +36,9 @@ class QueryEngineFactory(Protocol):
     def build_streaming_query_engine(self, llm: Any) -> AsyncQueryEngine:
         """Build a streaming-enabled query engine for the provided LLM."""
 
+    def has_indexed_documents(self) -> bool:
+        """Report whether any indexed documents are currently available."""
+
 
 @dataclass(frozen=True)
 class QueryResult:
@@ -88,17 +91,40 @@ class QueryEngineService:
         normalized_backend_id = _require_non_empty(backend_id, "backend_id")
         normalized_model = _require_non_empty(model, "model")
         _validate_history(history)
+        if not self._has_indexed_documents():
+            answer = await self._generate_general_chat_answer(
+                question=normalized_question,
+                history=history,
+                backend_id=normalized_backend_id,
+                model=normalized_model,
+            )
+            logger.info(
+                "query_engine_answer_completed backend_id=%s model=%s grounded=%s "
+                "retrieved_count=%s mode=%s",
+                normalized_backend_id,
+                normalized_model,
+                False,
+                0,
+                "general_chat",
+            )
+            return QueryResult(
+                answer=answer,
+                citations=[],
+                grounded=False,
+                retrieved_count=0,
+            )
         engine = self._get_or_build_query_engine(normalized_backend_id, normalized_model)
         query_payload = _build_query(normalized_question, history)
         response = await engine.aquery(query_payload)
         result = _to_query_result(response)
         logger.info(
             "query_engine_answer_completed backend_id=%s model=%s grounded=%s "
-            "retrieved_count=%s",
+            "retrieved_count=%s mode=%s",
             normalized_backend_id,
             normalized_model,
             result.grounded,
             result.retrieved_count,
+            "rag",
         )
         return result
 
@@ -113,6 +139,30 @@ class QueryEngineService:
         normalized_backend_id = _require_non_empty(backend_id, "backend_id")
         normalized_model = _require_non_empty(model, "model")
         _validate_history(history)
+        if not self._has_indexed_documents():
+            logger.info(
+                "query_engine_stream_started backend_id=%s model=%s mode=%s",
+                normalized_backend_id,
+                normalized_model,
+                "general_chat",
+            )
+            answer = await self._generate_general_chat_answer(
+                question=normalized_question,
+                history=history,
+                backend_id=normalized_backend_id,
+                model=normalized_model,
+            )
+            yield answer
+            logger.info(
+                "query_engine_stream_completed backend_id=%s model=%s chunk_count=%s "
+                "visible_chunk_count=%s mode=%s",
+                normalized_backend_id,
+                normalized_model,
+                1,
+                1,
+                "general_chat",
+            )
+            return
         engine = self._get_or_build_streaming_query_engine(
             normalized_backend_id,
             normalized_model,
@@ -120,9 +170,10 @@ class QueryEngineService:
         query_payload = _build_query(normalized_question, history)
         response = await engine.aquery(query_payload)
         logger.info(
-            "query_engine_stream_started backend_id=%s model=%s",
+            "query_engine_stream_started backend_id=%s model=%s mode=%s",
             normalized_backend_id,
             normalized_model,
+            "rag",
         )
         emitted_chunk_count = 0
         emitted_visible_chunk_count = 0
@@ -149,11 +200,12 @@ class QueryEngineService:
             yield EMPTY_STREAM_RESPONSE_TEXT
         logger.info(
             "query_engine_stream_completed backend_id=%s model=%s chunk_count=%s "
-            "visible_chunk_count=%s",
+            "visible_chunk_count=%s mode=%s",
             normalized_backend_id,
             normalized_model,
             emitted_chunk_count,
             emitted_visible_chunk_count,
+            "rag",
         )
 
     def _warm_up_backend_model(self, backend_id: str, model: str) -> None:
@@ -200,12 +252,51 @@ class QueryEngineService:
         logger.info("query_engine_llm_cached backend_id=%s model=%s", backend_id, model)
         return llm
 
+    def _has_indexed_documents(self) -> bool:
+        has_documents = self._engine_factory.has_indexed_documents()
+        if not isinstance(has_documents, bool):
+            raise ValueError("query engine factory must return a boolean for has_indexed_documents")
+        return has_documents
+
+    async def _generate_general_chat_answer(
+        self,
+        question: str,
+        history: list[ConversationTurn],
+        backend_id: str,
+        model: str,
+    ) -> str:
+        llm = self._get_or_build_llm(backend_id, model)
+        prompt = _build_general_chat_prompt(question, history)
+        response_text = await _complete_llm_text(llm, prompt)
+        cleaned_text = _remove_inline_citations(response_text)
+        if _is_effectively_empty_response_text(cleaned_text):
+            raise ValueError("general chat llm returned empty response text")
+        logger.info(
+            "query_engine_general_chat_answer_generated backend_id=%s model=%s answer_length=%s",
+            backend_id,
+            model,
+            len(cleaned_text),
+        )
+        return cleaned_text
+
 
 def _build_query(question: str, history: list[ConversationTurn]) -> str:
     if len(history) == 0:
         return question
     history_lines = [f"{turn.role}: {turn.message}" for turn in history]
     return f"Conversation history:\n{'\n'.join(history_lines)}\n\nQuestion:\n{question}"
+
+
+def _build_general_chat_prompt(question: str, history: list[ConversationTurn]) -> str:
+    if len(history) == 0:
+        history_text = "[none]"
+    else:
+        history_text = "\n".join([f"{turn.role}: {turn.message}" for turn in history])
+    return (
+        "You are a helpful assistant. Respond conversationally and concisely.\n\n"
+        f"Conversation history:\n{history_text}\n\n"
+        f"User message:\n{question}"
+    )
 
 
 def _to_query_result(response: Any) -> QueryResult:
@@ -241,6 +332,29 @@ def _extract_source_nodes(response: Any) -> list[Any]:
     if not isinstance(source_nodes, list):
         raise ValueError("query response source_nodes must be a list")
     return source_nodes
+
+
+async def _complete_llm_text(llm: Any, prompt: str) -> str:
+    if not hasattr(llm, "acomplete"):
+        raise ValueError("configured llm must implement async acomplete for general chat")
+    completion = await llm.acomplete(prompt)
+    return _extract_completion_text(completion)
+
+
+def _extract_completion_text(completion: Any) -> str:
+    if isinstance(completion, str):
+        return _require_non_empty(completion, "completion")
+    if hasattr(completion, "text"):
+        text_value = getattr(completion, "text")
+        if isinstance(text_value, str):
+            return _require_non_empty(text_value, "completion.text")
+    if hasattr(completion, "message"):
+        message = getattr(completion, "message")
+        if hasattr(message, "content"):
+            content = getattr(message, "content")
+            if isinstance(content, str):
+                return _require_non_empty(content, "completion.message.content")
+    raise ValueError("llm completion response must contain non-empty text")
 
 
 def _remove_inline_citations(text: str) -> str:

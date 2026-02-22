@@ -11,6 +11,11 @@ class FakeQueryResponse:
     source_nodes: list[object]
 
 
+@dataclass(frozen=True)
+class FakeCompletion:
+    text: str
+
+
 class FakeQueryEngine:
     async def aquery(self, query: str) -> FakeQueryResponse:
         if "empty sentinel" in query:
@@ -32,9 +37,14 @@ class FakeQueryEngine:
 
 
 class FakeQueryEngineFactory:
-    def __init__(self, stream_chunks: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        stream_chunks: list[str] | None = None,
+        has_documents: bool = True,
+    ) -> None:
         self.last_llm: object | None = None
         self.stream_chunks = stream_chunks
+        self.has_documents = has_documents
         self.query_engine_build_count = 0
         self.streaming_query_engine_build_count = 0
 
@@ -51,6 +61,9 @@ class FakeQueryEngineFactory:
         if self.stream_chunks is None:
             raise AssertionError("stream_chunks must be configured for streaming tests")
         return FakeStreamingQueryEngine(self.stream_chunks)
+
+    def has_indexed_documents(self) -> bool:
+        return self.has_documents
 
 
 class FakeStreamingResponse:
@@ -73,25 +86,46 @@ class FakeStreamingQueryEngine:
 
 
 class FakeLLMRegistry:
-    def __init__(self) -> None:
+    def __init__(self, general_chat_answer: str = "Hello from general knowledge.") -> None:
         self.calls: list[tuple[str, str]] = []
+        self.general_chat_answer = general_chat_answer
 
     def get_llm(self, backend_id: str, model: str) -> object:
         self.calls.append((backend_id, model))
-        return {"backend_id": backend_id, "model": model}
+        return FakeLLM(self.general_chat_answer)
 
 
-def build_query_engine_service() -> QueryEngineService:
+class FakeLLM:
+    def __init__(self, answer: str) -> None:
+        self._answer = answer
+
+    async def acomplete(self, prompt: str) -> FakeCompletion:
+        if prompt.strip() == "":
+            raise AssertionError("general chat prompt must not be empty")
+        return FakeCompletion(text=self._answer)
+
+
+def build_query_engine_service(
+    has_documents: bool = True,
+    general_chat_answer: str = "Hello from general knowledge.",
+) -> QueryEngineService:
     return QueryEngineService(
-        llm_registry=FakeLLMRegistry(),
-        engine_factory=FakeQueryEngineFactory(),
+        llm_registry=FakeLLMRegistry(general_chat_answer=general_chat_answer),
+        engine_factory=FakeQueryEngineFactory(has_documents=has_documents),
     )
 
 
-def build_query_engine_service_with_stream(chunks: list[str]) -> QueryEngineService:
+def build_query_engine_service_with_stream(
+    chunks: list[str],
+    has_documents: bool = True,
+    general_chat_answer: str = "Hello from general knowledge.",
+) -> QueryEngineService:
     return QueryEngineService(
-        llm_registry=FakeLLMRegistry(),
-        engine_factory=FakeQueryEngineFactory(stream_chunks=chunks),
+        llm_registry=FakeLLMRegistry(general_chat_answer=general_chat_answer),
+        engine_factory=FakeQueryEngineFactory(
+            stream_chunks=chunks,
+            has_documents=has_documents,
+        ),
     )
 
 
@@ -139,6 +173,26 @@ def test_answer_question_replaces_empty_response_sentinel_with_fallback() -> Non
     )
 
     assert result.answer == EMPTY_STREAM_RESPONSE_TEXT
+
+
+def test_answer_question_uses_general_chat_when_index_has_no_documents() -> None:
+    service = build_query_engine_service(
+        has_documents=False,
+        general_chat_answer="Hi there! How can I help?",
+    )
+
+    result = asyncio.run(
+        service.answer_question(
+            question="hi",
+            history=[],
+            backend_id="openrouter_lab",
+            model="openai/gpt-4o-mini",
+        )
+    )
+
+    assert result.answer == "Hi there! How can I help?"
+    assert result.grounded is False
+    assert result.retrieved_count == 0
 
 
 def test_stream_answer_question_yields_token_chunks_in_order() -> None:
@@ -248,6 +302,29 @@ def test_stream_answer_question_replaces_empty_response_sentinel() -> None:
     chunks = asyncio.run(collect())
 
     assert chunks == [EMPTY_STREAM_RESPONSE_TEXT]
+
+
+def test_stream_answer_question_uses_general_chat_when_index_has_no_documents() -> None:
+    service = build_query_engine_service_with_stream(
+        ["ignored chunk"],
+        has_documents=False,
+        general_chat_answer="Hi there! How can I help?",
+    )
+
+    async def collect() -> list[str]:
+        chunks = []
+        async for chunk in service.stream_answer_question(
+            question="hi",
+            history=[],
+            backend_id="openrouter_lab",
+            model="openai/gpt-4o-mini",
+        ):
+            chunks.append(chunk)
+        return chunks
+
+    chunks = asyncio.run(collect())
+
+    assert chunks == ["Hi there! How can I help?"]
 
 
 def test_warm_up_caches_llm_and_query_engines_per_backend_model() -> None:
