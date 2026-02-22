@@ -91,12 +91,16 @@ class ChatService:
             normalized_backend_id,
             normalized_model,
         )
-        return self._query_service.stream_answer_question(
+        stream = self._query_service.stream_answer_question(
             question=normalized_question,
             history=history,
             backend_id=normalized_backend_id,
             model=normalized_model,
         )
+        if not hasattr(stream, "__aiter__"):
+            raise ValueError("query_service stream_answer_question must return an async iterator")
+        async for chunk in stream:
+            yield chunk
 
 
 def _to_chat_result(result: Any) -> ChatResult:

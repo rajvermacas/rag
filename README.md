@@ -59,7 +59,7 @@ npm install
 
 ```bash
 npm run build:css
-uvicorn app.main:create_app --factory --reload
+uv run uvicorn app.main:create_app --factory --reload
 ```
 
 ## Test

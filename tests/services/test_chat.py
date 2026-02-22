@@ -78,7 +78,7 @@ def test_chat_stream_delegates_to_query_service() -> None:
     history = [ConversationTurn(role="user", message="Earlier message")]
 
     async def collect_chunks() -> list[str]:
-        stream = await service.stream_answer_question(
+        stream = service.stream_answer_question(
             question="What is revenue?",
             history=history,
             backend_id="openrouter_lab",
