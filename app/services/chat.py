@@ -1,53 +1,14 @@
-"""Grounded chat orchestration service."""
+"""Chat service facade over query-engine orchestration."""
 
 from dataclasses import dataclass
 import logging
-import re
-from typing import AsyncIterator, Protocol
+from typing import Any, AsyncIterator, Protocol
 
 from app.services.vector_store import IndexedChunk, IndexedDocument
 
 
 logger = logging.getLogger(__name__)
-
 NO_DOCUMENT_EVIDENCE = "No relevant evidence found in uploaded documents."
-INLINE_CITATION_PATTERN = re.compile(
-    r"\[[^\]\n]*(?:#chunk_id\s*=\s*\d+|#\d+)[^\]\n]*\]",
-    re.IGNORECASE,
-)
-
-
-class RetrievalService(Protocol):
-    async def retrieve(self, question: str) -> list[IndexedChunk]:
-        """Retrieve relevant chunks."""
-
-
-class ChatClient(Protocol):
-    async def generate_chat_response_with_backend(
-        self,
-        backend_id: str,
-        model: str,
-        system_prompt: str,
-        user_prompt: str,
-    ) -> str:
-        """Generate a chat response with explicit backend and model selection."""
-
-    async def stream_chat_response_with_backend(
-        self,
-        backend_id: str,
-        model: str,
-        system_prompt: str,
-        user_prompt: str,
-    ) -> AsyncIterator[str]:
-        """Stream a chat response with explicit backend and model selection."""
-
-    def get_provider_for_backend(self, backend_id: str) -> str:
-        """Resolve provider id for a backend id."""
-
-
-class DocumentService(Protocol):
-    def list_documents(self) -> list[IndexedDocument]:
-        """Return all indexed documents."""
 
 
 @dataclass(frozen=True)
@@ -64,90 +25,15 @@ class ConversationTurn:
     message: str
 
 
-class ChatService:
-    """Answer questions using document evidence plus model general knowledge."""
-
-    def __init__(
-        self,
-        retrieval_service: RetrievalService,
-        chat_client: ChatClient,
-        document_service: DocumentService,
-    ) -> None:
-        self._retrieval_service = retrieval_service
-        self._chat_client = chat_client
-        self._document_service = document_service
-
+class QueryService(Protocol):
     async def answer_question(
         self,
         question: str,
         history: list[ConversationTurn],
         backend_id: str,
         model: str,
-    ) -> ChatResult:
-        if question.strip() == "":
-            raise ValueError("question must not be empty")
-        normalized_backend_id = _require_non_empty_backend_id(backend_id)
-        normalized_model = _require_non_empty_model_id(model)
-        provider = self._chat_client.get_provider_for_backend(normalized_backend_id)
-        _validate_history(history)
-        documents = self._document_service.list_documents()
-        logger.info(
-            "chat_answer_started question_length=%s history_turns=%s available_documents=%s "
-            "backend_id=%s provider=%s model=%s",
-            len(question),
-            len(history),
-            len(documents),
-            normalized_backend_id,
-            provider,
-            normalized_model,
-        )
-        if _is_document_inventory_question(question):
-            answer = _build_document_inventory_answer(documents)
-            logger.info(
-                "chat_answer_completed_inventory_request document_count=%s backend_id=%s "
-                "provider=%s model=%s",
-                len(documents),
-                normalized_backend_id,
-                provider,
-                normalized_model,
-            )
-            return ChatResult(
-                answer=answer,
-                citations=[],
-                grounded=len(documents) > 0,
-                retrieved_count=0,
-            )
-
-        retrieval_query = _build_retrieval_query(question, history)
-        retrieved_chunks = await self._retrieve_chunks_or_empty(retrieval_query)
-        has_document_evidence = len(retrieved_chunks) > 0
-
-        system_prompt = _build_system_prompt(has_document_evidence)
-        user_prompt = _build_user_prompt(question, history, retrieved_chunks, documents)
-        raw_answer = await self._chat_client.generate_chat_response_with_backend(
-            normalized_backend_id,
-            normalized_model,
-            system_prompt,
-            user_prompt,
-        )
-        answer = _remove_inline_citations(raw_answer)
-
-        logger.info(
-            "chat_answer_completed grounded=%s retrieved_count=%s history_turns=%s "
-            "backend_id=%s provider=%s model=%s",
-            has_document_evidence,
-            len(retrieved_chunks),
-            len(history),
-            normalized_backend_id,
-            provider,
-            normalized_model,
-        )
-        return ChatResult(
-            answer=answer,
-            citations=[],
-            grounded=has_document_evidence,
-            retrieved_count=len(retrieved_chunks),
-        )
+    ) -> Any:
+        """Execute non-streaming question answering."""
 
     async def stream_answer_question(
         self,
@@ -156,115 +42,124 @@ class ChatService:
         backend_id: str,
         model: str,
     ) -> AsyncIterator[str]:
-        if question.strip() == "":
-            raise ValueError("question must not be empty")
-        normalized_backend_id = _require_non_empty_backend_id(backend_id)
-        normalized_model = _require_non_empty_model_id(model)
-        provider = self._chat_client.get_provider_for_backend(normalized_backend_id)
+        """Execute streaming question answering."""
+
+
+class ChatService:
+    """Validates chat inputs and delegates to query-engine services."""
+
+    def __init__(self, query_service: QueryService) -> None:
+        self._query_service = query_service
+
+    async def answer_question(
+        self,
+        question: str,
+        history: list[ConversationTurn],
+        backend_id: str,
+        model: str,
+    ) -> ChatResult:
+        normalized_question = _require_non_empty(question, "question")
+        normalized_backend_id = _require_non_empty(backend_id, "backend_id")
+        normalized_model = _require_non_empty(model, "model")
         _validate_history(history)
-        documents = self._document_service.list_documents()
+        result = await self._query_service.answer_question(
+            question=normalized_question,
+            history=history,
+            backend_id=normalized_backend_id,
+            model=normalized_model,
+        )
         logger.info(
-            "chat_stream_started question_length=%s history_turns=%s available_documents=%s "
-            "backend_id=%s provider=%s model=%s",
-            len(question),
-            len(history),
-            len(documents),
-            normalized_backend_id,
-            provider,
-            normalized_model,
-        )
-        if _is_document_inventory_question(question):
-            answer = _build_document_inventory_answer(documents)
-            logger.info(
-                "chat_stream_completed_inventory_request document_count=%s backend_id=%s "
-                "provider=%s model=%s",
-                len(documents),
-                normalized_backend_id,
-                provider,
-                normalized_model,
-            )
-            return _single_chunk_stream(answer)
-
-        retrieval_query = _build_retrieval_query(question, history)
-        retrieved_chunks = await self._retrieve_chunks_or_empty(retrieval_query)
-        has_document_evidence = len(retrieved_chunks) > 0
-        system_prompt = _build_system_prompt(has_document_evidence)
-        user_prompt = _build_user_prompt(question, history, retrieved_chunks, documents)
-        return self._chat_client.stream_chat_response_with_backend(
+            "chat_service_answer_completed backend_id=%s model=%s",
             normalized_backend_id,
             normalized_model,
-            system_prompt,
-            user_prompt,
+        )
+        return _to_chat_result(result)
+
+    async def stream_answer_question(
+        self,
+        question: str,
+        history: list[ConversationTurn],
+        backend_id: str,
+        model: str,
+    ) -> AsyncIterator[str]:
+        normalized_question = _require_non_empty(question, "question")
+        normalized_backend_id = _require_non_empty(backend_id, "backend_id")
+        normalized_model = _require_non_empty(model, "model")
+        _validate_history(history)
+        logger.info(
+            "chat_service_stream_started backend_id=%s model=%s",
+            normalized_backend_id,
+            normalized_model,
+        )
+        return self._query_service.stream_answer_question(
+            question=normalized_question,
+            history=history,
+            backend_id=normalized_backend_id,
+            model=normalized_model,
         )
 
-    async def _retrieve_chunks_or_empty(self, question: str) -> list[IndexedChunk]:
-        try:
-            return await self._retrieval_service.retrieve(question)
-        except ValueError as exc:
-            if str(exc) not in {
-                "retrieval returned no results",
-                "no results passed relevance threshold",
-            }:
-                raise
-            logger.info("chat_retrieval_no_evidence reason=%s", str(exc))
-            return []
+
+def _to_chat_result(result: Any) -> ChatResult:
+    required_fields = ("answer", "citations", "grounded", "retrieved_count")
+    missing_fields = [field for field in required_fields if not hasattr(result, field)]
+    if len(missing_fields) > 0:
+        raise ValueError(
+            "query_service answer result is missing required fields: "
+            f"{', '.join(missing_fields)}"
+        )
+    answer = getattr(result, "answer")
+    citations = getattr(result, "citations")
+    grounded = getattr(result, "grounded")
+    retrieved_count = getattr(result, "retrieved_count")
+    if not isinstance(answer, str):
+        raise ValueError("query_service answer must be a string")
+    if not isinstance(citations, list):
+        raise ValueError("query_service citations must be a list")
+    if not isinstance(grounded, bool):
+        raise ValueError("query_service grounded must be a boolean")
+    if not isinstance(retrieved_count, int):
+        raise ValueError("query_service retrieved_count must be an integer")
+    return ChatResult(
+        answer=answer,
+        citations=citations,
+        grounded=grounded,
+        retrieved_count=retrieved_count,
+    )
 
 
 def _validate_history(history: list[ConversationTurn]) -> None:
     for turn in history:
         if turn.role not in {"user", "assistant"}:
             raise ValueError("history role must be either 'user' or 'assistant'")
-        if turn.message.strip() == "":
-            raise ValueError("history message must not be empty")
+        _require_non_empty(turn.message, "history message")
 
 
-def _require_non_empty_model_id(model: str) -> str:
-    normalized_model = model.strip()
-    if normalized_model == "":
-        raise ValueError("model must not be empty")
-    return normalized_model
-
-
-def _require_non_empty_backend_id(backend_id: str) -> str:
-    normalized_backend_id = backend_id.strip()
-    if normalized_backend_id == "":
-        raise ValueError("backend_id must not be empty")
-    return normalized_backend_id
+def _require_non_empty(value: str, field_name: str) -> str:
+    normalized = value.strip()
+    if normalized == "":
+        raise ValueError(f"{field_name} must not be empty")
+    return normalized
 
 
 def _build_retrieval_query(question: str, history: list[ConversationTurn]) -> str:
-    recent_turns = history[-6:]
-    if len(recent_turns) == 0:
+    if len(history) == 0:
         return question
-    history_text = _format_history(recent_turns)
-    return f"Conversation history:\n{history_text}\n\nCurrent question:\n{question}"
+    history_lines = [f"{turn.role}: {turn.message}" for turn in history[-6:]]
+    return f"Conversation history:\n{'\n'.join(history_lines)}\n\nCurrent question:\n{question}"
 
 
 def _build_system_prompt(has_document_evidence: bool) -> str:
-    if not has_document_evidence:
-        document_section_instruction = (
-            f"If the provided context does not contain evidence, state exactly: "
-            f"'{NO_DOCUMENT_EVIDENCE}'. Then continue with a helpful answer using "
-            "general knowledge. Exception: if the user asks which uploaded documents "
-            "are available, answer directly from the 'Available uploaded documents' "
-            "section and do not output the no-evidence sentence. Do not include "
-            "citations, bracketed references, or chunk identifiers in your answer."
+    if has_document_evidence:
+        evidence_instruction = (
+            "Use document evidence when available and do not include inline citations."
         )
     else:
-        document_section_instruction = (
-            "Use document evidence, but do not include citations, bracketed references, "
-            "or chunk identifiers in your answer."
+        evidence_instruction = (
+            f"If no evidence is available, state exactly: '{NO_DOCUMENT_EVIDENCE}'."
         )
-
     return (
-        "You are a conversational retrieval-augmented assistant. "
-        "Use the conversation history to keep context across turns. "
-        "Respond naturally as a normal conversation; do not force section headers "
-        "or fixed templates unless the user explicitly asks for them. "
-        "The prompt includes an 'Available uploaded documents' section; when the user "
-        "asks what documents are available, answer with exact filenames from that list. "
-        f"{document_section_instruction} "
-        "Never claim model general knowledge came from uploaded files."
+        "You are a conversational retrieval assistant. Keep responses concise. "
+        f"{evidence_instruction}"
     )
 
 
@@ -275,13 +170,13 @@ def _build_user_prompt(
     documents: list[IndexedDocument],
 ) -> str:
     history_text = _format_history(history)
-    context = _format_context(chunks)
-    uploaded_documents = _format_uploaded_documents(documents)
+    context_text = _format_context(chunks)
+    documents_text = _format_documents(documents)
     return (
         f"Conversation history:\n{history_text}\n\n"
-        f"Available uploaded documents:\n{uploaded_documents}\n\n"
+        f"Available uploaded documents:\n{documents_text}\n\n"
         f"Question:\n{question}\n\n"
-        f"Context:\n{context}"
+        f"Context:\n{context_text}"
     )
 
 
@@ -292,20 +187,21 @@ def _format_history(history: list[ConversationTurn]) -> str:
 
 
 def _format_context(chunks: list[IndexedChunk]) -> str:
-    chunk_blocks: list[str] = []
-    for chunk in chunks:
-        metadata = (
-            f"doc_id={chunk.doc_id} "
-            f"filename={chunk.filename} "
-            f"chunk_id={chunk.chunk_id} "
-            f"score={chunk.score:.4f} "
-            f"page={chunk.page}"
-        )
-        chunk_blocks.append(f"[{metadata}]\n{chunk.text}")
-    return "\n\n".join(chunk_blocks)
+    if len(chunks) == 0:
+        return "[none]"
+    return "\n\n".join(
+        [
+            (
+                f"[doc_id={chunk.doc_id} filename={chunk.filename} "
+                f"chunk_id={chunk.chunk_id} score={chunk.score:.4f} page={chunk.page}]\n"
+                f"{chunk.text}"
+            )
+            for chunk in chunks
+        ]
+    )
 
 
-def _format_uploaded_documents(documents: list[IndexedDocument]) -> str:
+def _format_documents(documents: list[IndexedDocument]) -> str:
     if len(documents) == 0:
         return "[none]"
     return "\n".join(
@@ -315,39 +211,3 @@ def _format_uploaded_documents(documents: list[IndexedDocument]) -> str:
             for index, document in enumerate(documents)
         ]
     )
-
-
-async def _single_chunk_stream(answer: str) -> AsyncIterator[str]:
-    yield answer
-
-
-def _remove_inline_citations(text: str) -> str:
-    cleaned_text = INLINE_CITATION_PATTERN.sub("", text)
-    return cleaned_text.strip()
-
-
-def _is_document_inventory_question(question: str) -> bool:
-    normalized_question = question.lower()
-    inventory_terms = [
-        "what documents",
-        "which documents",
-        "list documents",
-        "uploaded documents",
-        "uploaded files",
-        "files you have access",
-        "documents you have access",
-        "what files",
-    ]
-    return any(term in normalized_question for term in inventory_terms)
-
-
-def _build_document_inventory_answer(documents: list[IndexedDocument]) -> str:
-    if len(documents) == 0:
-        return "I currently have no uploaded documents indexed."
-    lines = ["I currently have access to these uploaded documents:"]
-    for index, document in enumerate(documents):
-        lines.append(
-            f"{index + 1}. {document.filename} (doc_id: {document.doc_id}, "
-            f"chunks: {document.chunks_indexed})"
-        )
-    return "\n".join(lines)
